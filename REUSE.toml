@@ -1,0 +1,19 @@
+# FluxSense - REUSE.toml
+# Licensing of files that cannot carry a comment header (Markdown, plain data, test PDFs, prompts).
+#
+# SPDX-FileCopyrightText: (C) 2026 Thorsten Schnebeck <thorsten.schnebeck@gmx.net>
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+version = 1
+
+[[annotations]]
+path = ["**/*.md", "pyproject.toml", ".gitignore", ".github/**"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "(C) 2026 Thorsten Schnebeck <thorsten.schnebeck@gmx.net>"
+SPDX-License-Identifier = "GPL-3.0-or-later"
+
+[[annotations]]
+path = "fluxsense/data/ovisocr3_document_structured.txt"
+precedence = "override"
+SPDX-FileCopyrightText = "OvisOCR3 authors (ATH-MaaS), https://huggingface.co/ATH-MaaS/OvisOCR3"
+SPDX-License-Identifier = "Apache-2.0"

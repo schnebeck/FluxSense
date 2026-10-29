@@ -1,0 +1,30 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Runs, caches, documents
+/out/
+/bench-out/
+/runs/
+.cache/
+*.log
+*.pdf
+
+# Agent and planning files (never part of the repository)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+AGENTS.md
+GEMINI.md
+.cursor*
+.aider*
+memory/
+.mcp.json
