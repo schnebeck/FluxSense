@@ -357,7 +357,11 @@ page, bbox, status, evidence, signer_source, label, removed_ocr}`.
   line or signature: `Mieter`, `Der Vermieter`), ended by running text or a
   form label above it; or the gap in a closing block (`Mit freundlichen
   Grüßen` / organisation / signature / printed name); or a typed `gez.
-  <Name>`. A sentence that mentions `Unterschrift` is no label.
+  <Name>`. A label that starts with `Unterschrift` may be long
+  (`Unterschrift des Wohnungsgebers oder der beauftragten Person`). A
+  sentence that mentions `Unterschrift` is no label, nor is a form field
+  label that names a role (`Name des Wohnungsgebers`, `Anschrift des
+  Vermieters`).
 - `status` is measured as pen ink in that space (printed rules and the
   dates written next to it do not count): `signed`, `empty` or `unclear`.
   When the OCR joins a date and the signature beside it into one line,

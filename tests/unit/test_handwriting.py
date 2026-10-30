@@ -472,6 +472,25 @@ def test_unsigned_form_is_empty_and_body_text_is_no_signature_label(tmp_path: Pa
     assert [(b.label, b.status) for b in blocks] == [("Unterschrift", "empty")]
 
 
+def test_form_name_label_is_no_signature_place_and_long_signature_labels_count(tmp_path: Path) -> None:
+    """A form row 'Name des Wohnungsgebers' under a handwritten name is a form field, not a signature place; the long
+    'Unterschrift des Wohnungsgebers oder der beauftragten Person (Nachweis erforderlich)' is the signature label."""
+    landlord = person(random.Random("sig-wgb")).name
+    long_label = "Unterschrift des Wohnungsgebers oder der beauftragten Person (Nachweis erforderlich)"
+    page = Page()
+    page.text(LEFT, 120, "Wohnungsgeberbestätigung", 15, bold=True)
+    page.text(230, 196, landlord, 11, hand=True)
+    page.rule(228, 199, 533)
+    page.text(230, 210, "Name des Wohnungsgebers", 8)
+    signature(page, 240, 300, 7)
+    page.rule(228, 308, 533)
+    page.text(230, 320, long_label, 7)
+    blocks, _ = _blocks(page, tmp_path, "wgb-labels")
+    assert [(b.label, b.status) for b in blocks] == [(long_label, "signed")]
+    out = signers.attribute(blocks, {"meta_header": {"sender": {"name": landlord}}}, None)
+    assert out[0].role == "landlord" and out[0].signer_name == landlord
+
+
 def test_scribble_ocr_never_reaches_the_extraction(settings: Any, tmp_path: Path) -> None:
     """A scanned letter whose OCR reads the signature as a name-like line: the line is removed from the page text before
     Stage 2, the printed name under the signature is the signer, the scribble's reading is reported as removed."""

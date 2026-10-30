@@ -48,6 +48,8 @@
   removed from scanned pages before the extraction (`pipeline.signatures`),
   also when the OCR joins a handwritten date and the signature into one
   line (only the date stays; its share of the line is masked for the ink).
+  Long labels starting with `Unterschrift` are signature labels; form field
+  labels naming a role (`Name des Wohnungsgebers`) are not.
 - An IBAN printed with a wrong checksum is kept as printed and flagged
   (bank-code status, one-digit correction hints) instead of being removed;
   a one-time hint names `fluxsense blz-update` when no bank-code list is

@@ -68,6 +68,7 @@ ROLE_RULES: Tuple[Tuple["re.Pattern[str]", str, bool], ...] = tuple(
         (r"versicherungsnehmer|policyholder", "policyholder", False), (r"kontoinhaber|account holder", "account_holder", False),
         (r"erziehungsberechtigt|guardian", "guardian", False), (r"patient", "patient", False),
         (r"\bkunde|customer", "customer", False), (r"zahlungspflichtig|payer", "payer", False)))
+_LEADING_SIGNATURE_RE = re.compile(r"^\W*(?:ort\s*,?\s*/?\s*)?(?:datum\s*[,/]?\s*)?(?:unterschrift|signature)\b", re.IGNORECASE)
 _FILLER_WORDS = re.compile(r"\b(?:der|die|des|unterschrift|datum|ort|und|/|,|\(|\))\b", re.IGNORECASE)
 
 
@@ -110,11 +111,19 @@ def _role_only(text: str) -> bool:
 
 
 def _signature_label(text: str) -> bool:
-    """A printed signature label: short, no sentence ('Unterschrift des Wohnungsgebers', 'Datum/Unterschrift', 'Mieter')."""
+    """
+    A printed signature label: short, no sentence ('Unterschrift des Wohnungsgebers', 'Datum/Unterschrift', 'Mieter');
+    a label that starts with 'Unterschrift' may be longer ('Unterschrift des Wohnungsgebers oder der beauftragten
+    Person (Nachweis erforderlich)'). A form field label naming a role ('Name des Wohnungsgebers') is no signature label.
+    """
     clean = " ".join(text.split())
-    if not clean or len(clean) > 60 or len(clean.split()) > 6 or re.search(r"[.!?]\s*$", clean.strip("()")):
+    if not clean or re.search(r"[.!?]\s*$", clean.strip("()")):
         return False
-    return bool(SIGNATURE_LABEL_RE.search(clean)) or _role_only(clean)
+    if _LEADING_SIGNATURE_RE.match(clean) and len(clean) <= 120:
+        return True
+    if len(clean) > 60 or len(clean.split()) > 6:
+        return False
+    return bool(SIGNATURE_LABEL_RE.search(clean)) or (_role_only(clean) and classify_label(clean) is None)
 
 
 def name_like(text: str) -> bool:
