@@ -45,6 +45,7 @@ from fluxsense.layout import din5008
 from fluxsense.models.result import CheckResult, CheckStatus, FieldEvidence, GroundingStatus
 from fluxsense.stages.identity import is_role_label, unfilled_form
 from fluxsense.stages.repair import sender_only_in_table, stamp_dates
+from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR, date_check_messages
 
 LABEL, GEOMETRY, CHECK, MODEL = "label", "geometry", "check", "model"
 ACCEPTED_PROVENANCE: Tuple[str, ...] = (LABEL, GEOMETRY, CHECK)
@@ -597,6 +598,10 @@ class Assessor:
         if ev.path in self.outranked:
             reasons.append("an earlier listed label prints another number (§0.4)")
         reasons += self._identifier_reasons(ev)
+        date_reasons = date_check_messages(self.checks, ev.path)
+        if date_reasons:  # §9: name the conflicting field and value (or the ambiguous-year decision)
+            reasons += date_reasons
+            failing = [f for f in failing if f not in (CHECK_CONSISTENCY, CHECK_YEAR)]
         if din5008.GEOMETRY_CONFLICT in failing:
             reasons.append("geometry/model conflict")
             failing = [f for f in failing if f != din5008.GEOMETRY_CONFLICT]

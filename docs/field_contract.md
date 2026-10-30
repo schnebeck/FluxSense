@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.3 (2026-10-29). This contract defines what each core field of a
+Version 1.4 (2026-10-30). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -140,3 +140,38 @@ is printed, transaction IDs.
   opening balance, closing balance and transactions use one convention.
 - Transactions: every booking row of all pages in printed order; carry-over,
   subtotal and header rows are not transactions.
+
+## 9. Date consistency
+
+The dates of one logical document must fit together. The check compares
+`doc_date` (else the invoice or statement date) with the document's other
+dates; `other - doc_date` must lie in the window (days):
+
+| Other date | Window | Rule |
+|---|---|---|
+| `due_date` | -31 .. +366 | due at most a month before and a year after the invoice date |
+| `order_date` | -731 .. +92 | ordered at most 2 years before the invoice date |
+| `service_date` | -731 .. +366 | service / delivery within 2 years before and 1 year after |
+| `service_period_start` / `_end` | -1096 .. +366 / +731 | service period around the document date |
+| `effective_date` (contract) | open .. +731 | signed at most 2 years before the start; amendments and other later documents may follow at any time |
+| `period_start` (statement) | -500 .. +31 | issued at most about 16 months after the period starts |
+| `period_end` (statement, also against `statement_date`) | -366 .. +31 | issued within a year after the period ends |
+| `payment_due_date` (statement) | -31 .. +366 | debit within a year after the statement date |
+| `deadline` (letter) | -31 .. +731 | reply deadline within 2 years after the letter date |
+| `pay_period_end` (payslip) | -366 .. +62 | payslip within a year after its pay period |
+
+- A violation is a warning (`dates.consistency`) on both fields with a
+  review reason naming the other field and its value. It is never fixed
+  silently, and neither field is auto-accepted.
+- **Ambiguous years.** A two-digit year that is not grounded in the text,
+  and any zoom / vision reading, is ambiguous (one confused digit such as
+  0/2, 6/8, 1/7, or the other century). Its candidate readings are the first
+  model value, the current value, the dates in its snippets and their year
+  variants. If exactly one candidate is consistent with the other date -
+  which must be grounded in the text and not itself a visual reading - and
+  not in the future, it replaces the value, which stays flagged
+  (`dates.year_ambiguous`: "year ambiguous, chosen by consistency with ...").
+  With no or several consistent candidates nothing is chosen and the field
+  is flagged.
+- A zoom-verified value that still conflicts loses its visual support (it
+  counts as ungrounded).

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Field contract 1.4, §9 date consistency: the document date is checked
+  against the document's other dates (contract start, due / order /
+  service dates, statement period, reply deadline) in type-aware windows;
+  conflicts are warnings on both fields and block auto-acceptance. An
+  ambiguous year (two-digit, zoom / vision reading) is re-read only when
+  exactly one reading is consistent, and stays flagged; a zoom reading
+  that contradicts the other dates is no visual support.
+
 ## 0.1.0 - initial release
 
 - Holistic, type-driven extraction of logical documents from PDF stacks

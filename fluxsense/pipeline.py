@@ -20,6 +20,7 @@ Description:    Orchestration (order ported from KPaperFlux canonizer):
 import copy
 import hashlib
 import time
+from datetime import date
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,6 +67,7 @@ from fluxsense.stages.repair import (clean_document_numbers, complete_statement_
 from fluxsense.vision.zoom import ZoomTarget
 from fluxsense.validate import run_plausibility
 from fluxsense.validate.core import CheckContext, score_report
+from fluxsense.validate.dates import check_dates_consistency
 from fluxsense.wol import lease_for
 
 logger = get_logger("pipeline")
@@ -599,6 +601,13 @@ class Analyzer:
         if self.settings.grounding.self_consistency:
             disagreements = self._self_consistency(prepared, entity, evidence, extra_checks, private_id, business_id)
 
+        # §9: cross-field date consistency (after grounding / zoom / correction: their readings are final here)
+        date_checks, date_notes = check_dates_consistency(fields, evidence, date.today(),
+                                                          self.settings.plausibility.future_days_tolerance)
+        extra_checks += date_checks
+        if date_notes:
+            doc.corrections.append(CorrectionRecord(trigger_checks=["dates.consistency"], scope="ambiguous year", applied=True,
+                                                    note="; ".join(date_notes)))
         doc.plausibility = score_report(report.checks + grounding_checks + extra_checks)
         for table in outcome.tables:
             spec_rows = ((fields.get("bodies") or {}).get(table.path.split(".")[1]) or {}).get(table.path.split(".")[2])

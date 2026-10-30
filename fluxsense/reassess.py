@@ -179,6 +179,18 @@ def replay_deterministic(doc: Any, layer: TextLayer) -> List[str]:
     return notes
 
 
+def replay_date_consistency(doc: Any) -> List[str]:
+    """§9: re-runs the cross-field date check (and the ambiguous-year decision) on a saved document."""
+    from datetime import date
+    from fluxsense.validate.core import score_report
+    from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR, check_dates_consistency
+    fields = doc.fields if isinstance(doc.fields, dict) else {}
+    doc.plausibility.checks = [c for c in doc.plausibility.checks if c.check_id not in (CHECK_CONSISTENCY, CHECK_YEAR)]
+    checks, notes = check_dates_consistency(fields, doc.evidence, date.today())
+    doc.plausibility = score_report(doc.plausibility.checks + checks)
+    return notes + [c.message for c in checks if c.check_id == CHECK_CONSISTENCY]
+
+
 def reassess_result(result: AnalysisResult, layer: TextLayer, layout: bool = True) -> Dict[str, int]:
     """Re-runs the acceptance of every logical document of a result (in place). Returns the summed counts."""
     totals = {"auto_accepted": 0, "flagged": 0}
@@ -192,6 +204,8 @@ def reassess_result(result: AnalysisResult, layer: TextLayer, layout: bool = Tru
             for note in replay_layout(doc, layer) + replay_deterministic(doc, layer):
                 logger.info(f"{result.source.path}: {note}")
         fields = doc.fields if isinstance(doc.fields, dict) else {}
+        for note in replay_date_consistency(doc):
+            logger.info(f"{result.source.path}: {note}")
         hint = {(e.path, str(e.value)) for e in doc.evidence if e.provenance == "geometry"}
         evidence: List[FieldEvidence] = [e for e in doc.evidence if e.action != "synthesized"]
         counts = assess(fields, evidence, layer, list(doc.pages), contract_type(doc), doc.plausibility.checks,
