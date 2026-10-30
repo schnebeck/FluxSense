@@ -74,17 +74,31 @@ def cut_degenerate(items: List[LayoutItem]) -> Tuple[List[LayoutItem], bool]:
     return out, degenerate
 
 
+def _median(histogram: List[int]) -> int:
+    half, seen = sum(histogram) / 2, 0
+    for level, count in enumerate(histogram):
+        seen += count
+        if seen >= half:
+            return level
+    return 255
+
+
 def ink_below(image: Image.Image, y_fraction: float, margin: float = 0.03) -> float:
-    """Share of dark pixels below a height fraction (the bottom margin excluded) on a downscaled grey render."""
+    """
+    Share of ink pixels below a height fraction (the bottom margin excluded)
+    on a downscaled grey render; ink is darker than the paper by a clear
+    margin (a tinted or grey scan background is no ink).
+    """
     small = image.convert("L")
     small.thumbnail((400, 400))
     top = int(small.height * min(1.0, y_fraction + margin))
     bottom = int(small.height * (1.0 - margin))
     if bottom <= top:
         return 0.0
+    paper = _median(small.histogram())
     region = small.crop((0, top, small.width, bottom))
     histogram = region.histogram()
-    dark = sum(histogram[:160])
+    dark = sum(histogram[:max(0, min(160, paper - 70))])
     return dark / max(1, region.width * region.height)
 
 

@@ -7,12 +7,13 @@ File:           tests/unit/test_ovis_degenerate.py
 Version:        0.1.0
 Producer:       thorsten.schnebeck@gmx.net
 Generator:      Claude Opus 5.5
-Description:    Degenerate OvisOCR3 answers on a generated 600 dpi scan of a
-                hand-filled form: a runaway digit repetition inside an item
-                and an early stop trigger a re-read as overlapping tiles
-                rendered from the native resolution; the merged layout is
-                complete and the warning recorded. Negatives: long but
-                legitimate numbers, leader dots and a short page.
+Description:    Defensive detection of degenerate OvisOCR3 answers on a
+                generated 600 dpi scan of a hand-filled form: a runaway
+                digit repetition inside an item and an early stop trigger a
+                re-read as overlapping tiles rendered from the native
+                resolution; the merged layout is complete and the warning
+                recorded. Negatives: long but legitimate numbers, leader
+                dots, a short page and a grey scan background.
 ------------------------------------------------------------------------------
 """
 
@@ -137,3 +138,30 @@ def test_normal_and_short_pages_are_not_retiled(settings: Any, tmp_path: Path) -
     handler, seen = _answers(short, _items(short))
     layer = build_text_layer(pdf, settings, "ovisocr3", backend=FakeBackend(handler))
     assert len(seen) == 1 and not any(w.startswith("ovis_degenerate") for w in layer.warnings)
+
+
+def test_grey_scan_background_is_no_ink() -> None:
+    """A short page scanned on grey (tinted) paper: the empty lower half is paper, not ink - no early stop."""
+    from PIL import Image
+    from fluxsense.extract.ovis import stopped_early
+    short = Page()
+    short.text(62, 80, "Kurze Notiz", 14, bold=True)
+    short.text(62, 110, "Bitte zurückrufen.", 10)
+    with pymupdf.open(_tmp_pdf(short)) as doc:
+        pix = doc[0].get_pixmap(dpi=100)
+    image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("L").point(lambda v: int(v * 0.6))
+    items = parse_structured(_items(short), 1)
+    assert not stopped_early(items, image.convert("RGB"))
+    dense = Page()
+    dense.text(62, 80, "Kurze Notiz", 14, bold=True)
+    for i in range(30):
+        dense.text(62, 300 + 15 * i, "Weitere gedruckte Zeile mit Text für den unteren Teil der Seite.", 10)
+    with pymupdf.open(_tmp_pdf(dense)) as doc:
+        pix = doc[0].get_pixmap(dpi=100)
+    image = Image.frombytes("RGB", (pix.width, pix.height), pix.samples).convert("L").point(lambda v: int(v * 0.6))
+    assert stopped_early(parse_structured([i for i in _items(dense) if i["bbox"][3] < 200], 1), image.convert("RGB"))
+
+
+def _tmp_pdf(page: Page) -> Path:
+    import tempfile
+    return render([page], Path(tempfile.mkdtemp()) / "page.pdf")
