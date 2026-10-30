@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 - 2026-10-31
 
 - Field contract 1.8, §13: text levels per page (`raw`, `clean` -
   dehyphenated, soft hyphens removed, running text reflowed to paragraphs,
