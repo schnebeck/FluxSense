@@ -136,7 +136,13 @@ is printed, transaction IDs.
 - Credit note: the account the credit is paid to, if printed; else empty.
 - Statement: the account's own IBAN.
 - Letter: the payee account only if a payment is requested.
-- An IBAN that fails mod-97 is never output.
+- An IBAN that fails mod-97 is never output - unless the document prints
+  it exactly so (character for character in the native text, or confirmed
+  as printed on the zoom crop): then it is kept as printed, flagged with an
+  error ("as printed fails the checksum; verify with the issuer"), the
+  bank-code status and up to two one-digit corrections that pass mod-97
+  and keep a known bank code (hints only, never applied), and never
+  auto-accepted. A misread IBAN is removed.
 - Bank identifiers (BLZ, account number, BIC) are never a tax ID, VAT ID or
   IBAN unless they pass that field's format check.
 - §2.8: the ordering customer (`Auftraggeber`, `Kontoinhaber`) is never the

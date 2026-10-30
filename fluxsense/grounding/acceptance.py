@@ -628,7 +628,7 @@ class Assessor:
         if ev.path in self.outranked:
             reasons.append("an earlier listed label prints another number (§0.4)")
         reasons += self._identifier_reasons(ev)
-        named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous")
+        named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous", "grounding.iban_printed_invalid")
         date_reasons = list(dict.fromkeys(c.message for c in self.checks if c.check_id in named and c.field == ev.path))
         if date_reasons:  # §9 / §12: name the conflicting value, the ambiguous readings or the year decision
             reasons += date_reasons

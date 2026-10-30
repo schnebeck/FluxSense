@@ -247,9 +247,18 @@ def test_ocr_only_grounding_is_weak_on_scans_and_iban_is_rezoomed(monkeypatch: p
     assert any(r.label.startswith("Zoom verify") for r in seen)
 
 
-def test_invalid_iban_stays_flagged_when_zoom_agrees(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If the zoom repeats the invalid reading, the checksum failure overrides 'verified'."""
+def test_invalid_iban_confirmed_as_printed_is_kept_and_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the zoom confirms the invalid reading as printed, the IBAN is kept as printed with an ERROR check (the document
+    itself carries a wrong IBAN); it is never auto-accepted."""
     fields, ev, outcome, _ = iban_case(monkeypatch, {"answers": [{"id": "F1", "visible": True, "printed": None, "matches": True}]})
+    assert ev.action == "kept" and fields["meta_header"]["recipient"]["iban"] == WRONG_IBAN
+    check = next(c for c in outcome.checks if c.check_id == "grounding.iban_printed_invalid")
+    assert check.severity.value == "ERROR" and "as printed fails the checksum; verify with the issuer" in check.message
+
+
+def test_misread_invalid_iban_is_still_removed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An invalid IBAN the zoom cannot confirm as printed is removed as before."""
+    fields, ev, outcome, _ = iban_case(monkeypatch, {"answers": [{"id": "F1", "visible": False, "printed": None, "matches": False}]})
     assert ev.status == U and ev.action == "nulled" and "iban" not in fields["meta_header"]["recipient"]
     assert any(c.check_id == "grounding.iban_checksum" and c.severity.value == "ERROR" for c in outcome.checks)
 

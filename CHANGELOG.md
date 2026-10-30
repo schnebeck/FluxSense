@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- An IBAN printed with a wrong checksum is kept as printed and flagged
+  (bank-code status, one-digit correction hints) instead of being removed;
+  a one-time hint names `fluxsense blz-update` when no bank-code list is
+  installed.
 - Field contract 1.6, §12: form fields of scanned form pages are read by
   their printed label - one native-resolution crop per field, a typed
   question without the full-page value; dates with their candidate

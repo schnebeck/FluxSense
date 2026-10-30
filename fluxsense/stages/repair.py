@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from fluxsense.catalog.contract import (DATE_LINE_GROUPS, DATE_TOKEN_RE, FIELD_LABELS, FIRST_PAGE_DATE_GROUPS,
                                        ORDERING_CUSTOMER_LABELS, PAYEE_LABELS, STATEMENT_FOREIGN_NUMBER_LABELS, contract_for,
@@ -952,13 +952,14 @@ def fix_transfer_confirmation(fields: Dict[str, Any], text: str) -> List[str]:
     return notes
 
 
-def sanitize_bank_identifiers(fields: Dict[str, Any]) -> List[str]:
+def sanitize_bank_identifiers(fields: Dict[str, Any], keep: Optional[Set[str]] = None) -> List[str]:
     """
     §7: bank identifiers are never a tax / VAT ID or an IBAN unless they pass
     that field's format check - a BLZ as tax_id and an account number failing
     mod-97 as IBAN are removed (also where no evidence record checked them).
     """
     from fluxsense.grounding.snap import iban_valid
+    keep = {compact(k) for k in keep or set()}  # IBANs printed with a wrong checksum: kept and flagged (§7)
     notes: List[str] = []
     meta = fields.get("meta_header") or {}
     for role in ("sender", "recipient"):
@@ -968,12 +969,13 @@ def sanitize_bank_identifiers(fields: Dict[str, Any]) -> List[str]:
         for key, vat in (("tax_id", False), ("vat_id", True)):
             if party.get(key) and not valid_tax_id(party[key], vat):
                 notes.append(f"{role}.{key} {party.pop(key)!r} removed (no valid {'VAT ID' if vat else 'tax number'})")
-        if party.get("iban") and not iban_valid(str(party["iban"])):
+        if party.get("iban") and not iban_valid(str(party["iban"])) and compact(str(party["iban"])) not in keep:
             notes.append(f"{role}.iban {party.pop('iban')!r} removed (fails mod-97)")
     bodies = fields.get("bodies") or {}
     holders = [bodies.get("statement_body")] + list(((bodies.get("finance_body") or {}).get("payment_accounts") or []))
     for holder in holders:
-        if isinstance(holder, dict) and holder.get("iban") and not iban_valid(str(holder["iban"])):
+        if isinstance(holder, dict) and holder.get("iban") and not iban_valid(str(holder["iban"])) \
+                and compact(str(holder["iban"])) not in keep:
             notes.append(f"iban {holder.pop('iban')!r} removed (fails mod-97)")
     return notes
 

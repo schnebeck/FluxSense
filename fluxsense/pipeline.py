@@ -37,7 +37,7 @@ from fluxsense.extract.fieldread import FieldReader, apply_fields, map_fields
 from fluxsense.extract import build_text_layer
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.acceptance import assess
-from fluxsense.grounding.harness import GroundingHarness, holds, parse_printed, trust_report
+from fluxsense.grounding.harness import CHECK_IBAN_PRINTED_INVALID, GroundingHarness, holds, parse_printed, trust_report
 from fluxsense.grounding.normalize import compact, to_decimal
 from fluxsense.layout import din5008
 from fluxsense.llm.base import BackendAuthError, BackendUnreachable, LLMBackend
@@ -651,7 +651,8 @@ class Analyzer:
             doc.plausibility = score_report(doc.plausibility.checks)
             timings["review"] += round(time.monotonic() - t0, 3)
 
-        bank_notes = sanitize_bank_identifiers(fields)
+        printed_invalid = {str(c.actual) for c in doc.plausibility.checks if c.check_id == CHECK_IBAN_PRINTED_INVALID and c.actual}
+        bank_notes = sanitize_bank_identifiers(fields, printed_invalid)
         if bank_notes:
             doc.corrections.append(CorrectionRecord(trigger_checks=["identifiers"], scope="bank identifiers", applied=True,
                                                     note="; ".join(bank_notes)))

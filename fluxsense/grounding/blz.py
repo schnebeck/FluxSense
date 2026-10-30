@@ -45,7 +45,9 @@ def load_blz() -> FrozenSet[str]:
     """
     if USER_BLZ_FILE.exists():
         return _parse(USER_BLZ_FILE.read_text(encoding="latin-1"))
-    logger.debug("no BLZ list (run 'fluxsense blz-update'); bank-code check skipped")
+    # logged once per process (cached): a fresh install has no list until 'fluxsense blz-update' ran
+    logger.info("no German bank-code list installed: bank-code checks of IBANs are skipped "
+                "(run 'fluxsense blz-update' once to download it)")
     return frozenset()
 
 

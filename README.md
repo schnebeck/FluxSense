@@ -134,6 +134,11 @@ fluxsense gen-testdocs --out testdocs --seed 7 --count 24   # fictional test doc
 fluxsense blz-update                          # optional German bank-code list
 ```
 
+The German bank-code check of IBANs needs the Bundesbank bank-code list,
+which is not bundled: run `fluxsense blz-update` once (it downloads the list
+into `~/.local/share/fluxsense/blz.txt`). Without it the check is skipped and
+`fluxsense doctor` says so.
+
 `--ocr-engine` selects the auxiliary text layer: `auto` (native text, plus
 OCR for scans), `native`, `ocrmypdf`, `ovisocr3`, `docling`, `docling-vlm`
 or `docling-serve`. The vision model always reads the page images; the text

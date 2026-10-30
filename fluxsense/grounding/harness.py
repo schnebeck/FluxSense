@@ -190,6 +190,60 @@ def _any_iban(fields: Dict[str, Any]) -> bool:
     return any(values)
 
 
+CHECK_IBAN_PRINTED_INVALID = "grounding.iban_printed_invalid"
+
+
+def printed_as_is(layer: TextLayer, pages: List[int], ev: FieldEvidence) -> bool:
+    """
+    True if an (invalid) IBAN is printed exactly so: character for character
+    in the native text layer, or confirmed as printed on the zoom crop (OCR
+    alone is no proof: OCR and VLM can share a misreading). Masked IBANs never.
+    """
+    value = normalize_iban(str(ev.value or ""))
+    if len(value) < 15 or re.search(r"[X*]", value[4:]):
+        return False
+    verification = ev.verification or {}
+    if verification.get("visible") and (verification.get("matches") or
+                                        normalize_iban(str(verification.get("printed") or "")) == value):
+        return True
+    for number in pages:
+        page = layer.page(number)
+        native = page.sources.get("native", "") if page else ""
+        if value in compact(native.upper()):
+            return True
+    return False
+
+
+def iban_digit_hints(iban: str, limit: int = 2) -> List[str]:
+    """
+    Up to `limit` IBANs one digit away (bank code and account digits; never
+    the check digits) that pass mod-97 - and keep a known German bank code
+    when the bank-code list is installed. Hints only, never applied.
+    """
+    out: List[str] = []
+    for i in range(4, len(iban)):
+        if not iban[i].isdigit():
+            continue
+        for digit in "0123456789":
+            if digit == iban[i]:
+                continue
+            candidate = iban[:i] + digit + iban[i + 1:]
+            if iban_valid(candidate) and known_german_blz(candidate) is not False and candidate not in out:
+                out.append(candidate)
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def printed_invalid_message(iban: str) -> str:
+    """Review text of an IBAN printed with a wrong checksum: bank-code status and correction hints."""
+    status = known_german_blz(iban)
+    bank = {True: "bank code known", False: "bank code unknown", None: "bank code not checked (run 'fluxsense blz-update')"}[status]
+    hints = iban_digit_hints(iban)
+    hint = f"; one-digit corrections passing mod-97: {', '.join(hints)}" if hints else ""
+    return f"IBAN {iban} as printed fails the checksum; verify with the issuer ({bank}{hint})"
+
+
 def snap_ibans(layer: TextLayer, pages: List[int], fields: Dict[str, Any], evidence: List[FieldEvidence],
                specs: Sequence[TypeSpec]) -> List[CorrectionRecord]:
     """
@@ -576,8 +630,16 @@ class GroundingHarness:
                     snaps.append(_snap_record(ev.path, ev.value, repaired, "checksum repair (visual confusion), confirmed on 400 dpi crop"))
                     ev.original_value, ev.value, ev.action, ev.status = ev.value, repaired, "replaced", GroundingStatus.VERIFIED
                     continue
+                if printed_as_is(layer, pages, ev):
+                    # the document itself prints an invalid IBAN (native text, or confirmed on the zoom crop): keep it as
+                    # printed - never auto-accepted - with the bank-code status and checksum-valid one-digit hints
+                    ev.action = "kept"
+                    checks.append(CheckResult(check_id=CHECK_IBAN_PRINTED_INVALID, rule="grounding", status=CheckStatus.FAIL,
+                                              severity=Severity.ERROR, field=ev.path, actual=str(ev.value),
+                                              pages=[ev.page] if ev.page else [], message=printed_invalid_message(str(ev.value))))
+                    continue
                 # A failing deterministic check overrides 'grounded'/'verified' (OCR and VLM can share an error);
-                # an invalid or masked IBAN is never output.
+                # an invalid or misread IBAN is never output.
                 if holds(fields, ev):
                     set_path(fields, ev.path, None)
                 ev.original_value = ev.original_value or ev.value

@@ -99,10 +99,10 @@ def test_embedded_xml_values_are_protected(settings: Any, samples: Dict[str, Any
     pdf = embed_zugferd(source, tmp_path / "invoice_zugferd.pdf", xml)
     original = pipeline_module.sanitize_bank_identifiers
 
-    def heuristic(fields: Dict[str, Any]) -> List[str]:
+    def heuristic(fields: Dict[str, Any], keep: Any = None) -> List[str]:
         fields["bodies"]["finance_body"]["due_date"] = "2031-09-30"  # e.g. 'Ihr Tarif ist gültig bis 30.09.2031'
         fields["meta_header"].pop("doc_date", None)
-        return original(fields)
+        return original(fields, keep)
 
     monkeypatch.setattr(pipeline_module, "sanitize_bank_identifiers", heuristic)
     backend = FakeBackend(lambda r: {"bodies": {"finance_body": {"due_date": {"v": "2031-09-30"}}}} if r.label.startswith("Stage 2") else None)
