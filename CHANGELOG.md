@@ -37,12 +37,17 @@
   agrees with may be auto-accepted again. Native AcroForm fields of
   digital PDFs are read from their widgets without vision. The readings
   are output as `form_fields[]`.
+- Letter deadlines: `bis zum` / `bis` count as a deadline label only on a
+  line that asks the recipient to act; an offer's validity date is no
+  longer auto-accepted as a deadline.
 - Signatures as structured output (`signatures[]`: signer, role, place,
   date, page, bbox, status `signed | empty | unclear`, evidence): the
   status comes from the pen ink in the signature space, the signer only
   from printed content (i. A. / i. V. name, printed name, line label ->
   party, §2.4 form filler; else null). OCR text of signature scribbles is
-  removed from scanned pages before the extraction (`pipeline.signatures`).
+  removed from scanned pages before the extraction (`pipeline.signatures`),
+  also when the OCR joins a handwritten date and the signature into one
+  line (only the date stays; its share of the line is masked for the ink).
 - An IBAN printed with a wrong checksum is kept as printed and flagged
   (bank-code status, one-digit correction hints) instead of being removed;
   a one-time hint names `fluxsense blz-update` when no bank-code list is

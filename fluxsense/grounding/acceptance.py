@@ -37,7 +37,8 @@ from fluxsense.catalog.contract import (DATE_TOKEN_RE, FIELD_LABELS, FIRST_PAGE_
                                         is_document_title, not_a_party, number_labels, own_number_hits, same_value, signature_line,
                                         subject_context, HEADER_ONLY_NUMBER_LABELS, ORDERING_CUSTOMER_LABELS, PAYEE_LABELS,
                                         form_signature_dates, geometry_policy, is_name_fragment, labelled_values, party_problem,
-                                        derived_period_value, previous_statement_days, printed_period_pairs)
+                                        derived_period_value, previous_statement_days, printed_period_pairs,
+                                        DEADLINE_CONTEXT_LABELS, DEADLINE_DUTY_RE)
 from fluxsense.extract.base import TextLayer
 from fluxsense.formats import valid_tax_id
 from fluxsense.formats.iban import iban_valid
@@ -422,6 +423,10 @@ class Assessor:
         if name in ("period_start",):
             return None
         labels = FIELD_LABELS.get(name) or (FIELD_LABELS["iban"] if kind == "iban" else ())
+        if name == "deadline":
+            duty = [bool(DEADLINE_DUTY_RE.search(line)) for line in self.lines]
+            asking = [line if duty[i] or (i and duty[i - 1]) else "" for i, line in enumerate(self.lines)]
+            return label_near(kind, ev.value, labels, self.lines) or label_near(kind, ev.value, DEADLINE_CONTEXT_LABELS, asking)
         return label_near(kind, ev.value, labels, self.lines) if labels else None
 
     def _party_label(self, role: str, value: str) -> Optional[str]:

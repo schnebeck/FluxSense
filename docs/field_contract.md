@@ -126,6 +126,10 @@ is printed, transaction IDs.
 - Invoice: printed payment due date (`zahlbar bis`, `fällig am`), or the
   printed direct-debit date (`buchen wir am`, `Abbuchung am`).
 - Letter: only a deadline the recipient must meet by a printed date.
+  `bis spätestens`, `spätestens` and `Frist` label it; `bis zum` / `bis`
+  only on a line (or the line after it) that asks the recipient to act
+  (pay, send back, submit, reply, object, ...). An offer's or campaign's
+  validity (`gilt bei Buchung bis zum ...`) is no deadline.
 - Statement: only if a debit date for the balance is printed
   (`wird am ... belastet`, `fällig am`).
 
@@ -356,6 +360,8 @@ page, bbox, status, evidence, signer_source, label, removed_ocr}`.
   <Name>`. A sentence that mentions `Unterschrift` is no label.
 - `status` is measured as pen ink in that space (printed rules and the
   dates written next to it do not count): `signed`, `empty` or `unclear`.
+  When the OCR joins a date and the signature beside it into one line,
+  only the date's share of that line is masked.
   A bare role word without ink and without a signature rule is no
   signature place.
 - The signer is derived from printed content only, never by reading the
@@ -373,7 +379,8 @@ page, bbox, status, evidence, signer_source, label, removed_ocr}`.
 - On scanned pages the OCR text inside a signed or unclear signature space
   (except dates and form labels) is removed from the page text, its layout
   items and word boxes before the extraction (`removed_ocr`), so the
-  scribble can never become a party or a name.
+  scribble can never become a party or a name. A line that joins a date
+  and the scribble keeps only the date (and a leading `<Ort>, den`).
 
 ### 12.4 Freely handwritten pages
 

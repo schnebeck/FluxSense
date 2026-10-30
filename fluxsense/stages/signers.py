@@ -56,6 +56,7 @@ _GEZ_RE = re.compile(r"^\s*gez\.\s*(.+?)\s*$", re.IGNORECASE)
 _NAME_RE = re.compile(r"^(?:(?:Dr|Prof|Dipl)\.(?:-\w+\.?)?\s+)*[A-ZÄÖÜ][\wäöüß'-]*\.?(?:\s+[A-ZÄÖÜ][\wäöüß'-]*\.?){0,3}$")
 _HANDWRITTEN_DATE_RE = re.compile(r"\d{1,2}\s*[./|]\s*\d{1,2}\s*[./|]\s*\d{2,4}")
 _PLACE_DEN_RE = re.compile(r"^\s*([A-ZÄÖÜ][\wäöüß .-]{1,30}?)\s*,\s*(?:den\s+|am\s+)?(.*)$")
+_PLACE_PREFIX_RE = re.compile(r"^\s*(?:[A-ZÄÖÜ][\wäöüß .-]{1,30}?\s*,\s*(?:den|am)?\s*)?$")
 # Role words of signature line labels: (pattern, role, issuing side of the document).
 ROLE_RULES: Tuple[Tuple["re.Pattern[str]", str, bool], ...] = tuple(
     (re.compile(pattern, re.IGNORECASE), role, issuing) for pattern, role, issuing in (
@@ -128,6 +129,31 @@ def name_like(text: str) -> bool:
 
 def _date_like(text: str) -> bool:
     return bool(DATE_TOKEN_RE.search(text) or _HANDWRITTEN_DATE_RE.search(text))
+
+
+def _date_span(text: str) -> Optional[Tuple[int, int]]:
+    """
+    Character span of the date in a line that also holds other writing: OCR
+    joins a date and the signature written beside it into one line
+    ('07.08.2026 <scribble read as words>'). A leading '<Ort>, den' belongs
+    to the date. None for a line that holds only a date (and its place).
+    """
+    match = DATE_TOKEN_RE.search(text) or _HANDWRITTEN_DATE_RE.search(text)
+    if match is None:
+        return None
+    start = 0 if _PLACE_PREFIX_RE.match(text[:match.start()]) else match.start()
+    rest = text[:start] + text[match.end():]
+    return (start, match.end()) if sum(c.isalpha() for c in rest) >= 2 else None
+
+
+def _date_part(text: str, box: Box) -> Tuple[str, Box]:
+    """The date of a date line and its share of the line box (by characters, one character of margin)."""
+    span = _date_span(text)
+    if span is None:
+        return text, box
+    step = (box[2] - box[0]) / max(1, len(text))
+    return text[span[0]:span[1]].strip(), (box[0] + max(0, span[0] - 1) * step, box[1],
+                                            box[0] + min(len(text), span[1] + 1) * step, box[3])
 
 
 def _inside(box: Box, region: Box, tolerance: float = 1.5) -> bool:
@@ -274,7 +300,8 @@ def find_blocks(page: PageText, overview: Optional[Image.Image] = None) -> List[
     for block in blocks:
         if block.kind == TYPED_SIGNATURE or block.region is None:
             continue
-        keep = [b for t, b in lines if _inside(b, block.region) and (_date_like(t) or classify_label(t))]
+        keep = [b if classify_label(t) else _date_part(t, b)[1] for t, b in lines
+                if _inside(b, block.region) and (_date_like(t) or classify_label(t))]
         block.ink = _pen_ink(overview, width, height, block.region, keep) if overview is not None else None
         block.status = _status(block.ink)
     # a bare role word ('Mieter') is a signature place only with ink above it or a signature rule
@@ -296,17 +323,24 @@ def scrub_page(page: PageText, blocks: Sequence[SignatureBlock]) -> List[str]:
         return []
     width, height = page.width or 595.0, page.height or 842.0
     removed: List[str] = []
+    shortened: Dict[str, str] = {}  # dated scribble line -> its date
     for block in blocks:
         if block.region is None or block.kind == TYPED_SIGNATURE or block.status == EMPTY:
             continue
         for text, box in page_lines(page):
-            if text.strip() and _inside(box, block.region) and not _date_like(text) and not classify_label(text) \
-                    and " ".join(text.split()) != block.label:
+            if not text.strip() or not _inside(box, block.region) or classify_label(text) \
+                    or " ".join(text.split()) == block.label:
+                continue
+            if not _date_like(text):
                 block.removed.append(text.strip())
+            elif _date_span(text) is not None:
+                date_text = _date_part(text, box)[0]
+                shortened[text.strip()] = date_text
+                block.removed.append(text.strip().replace(date_text, "", 1).strip(" ,"))
         removed += block.removed
     if not removed:
         return []
-    garbage = {r.strip() for r in removed}
+    garbage = {r.strip() for r in removed} | set(shortened)
     regions = [b.region for b in blocks if b.region is not None and b.removed]
     kept_items = []
     for item in page.items or []:
@@ -314,9 +348,11 @@ def scrub_page(page: PageText, blocks: Sequence[SignatureBlock]) -> List[str]:
                           item.bbox[3] / 1000 * height)
         content_lines = item.content.splitlines() or [item.content]
         step = (y1 - y0) / max(1, len(content_lines))
-        rest = [line for n, line in enumerate(content_lines)
-                if not (line.strip() in garbage and any(_inside((x0, y0 + n * step, x1, y0 + (n + 1) * step), r) for r in regions))]
-        if len(rest) == len(content_lines):
+        rest = [shortened.get(line.strip(), "") if line.strip() in shortened else line
+                for n, line in enumerate(content_lines)
+                if not (line.strip() in garbage and line.strip() not in shortened
+                        and any(_inside((x0, y0 + n * step, x1, y0 + (n + 1) * step), r) for r in regions))]
+        if rest == content_lines:
             kept_items.append(item)
         elif rest:
             item.content = "\n".join(rest)
@@ -334,6 +370,7 @@ def scrub_page(page: PageText, blocks: Sequence[SignatureBlock]) -> List[str]:
                 if existing.strip() == target:
                     del lines[n]
                     break
+        lines = [shortened.get(line.strip(), line) for line in lines]
         page.sources[key] = "\n".join(lines)
     logger.info(f"signatures p{page.page}: removed {len(removed)} OCR line(s) of signature scribbles")
     return removed

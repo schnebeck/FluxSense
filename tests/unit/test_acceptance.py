@@ -366,3 +366,21 @@ def test_party_labels_form_issuer_and_same_party_rank() -> None:
     evidence = [_ev("meta_header.doc_date", "date", "2031-06-30")]
     assess({"meta_header": {"doc_date": "2031-06-30"}}, evidence, _layer(quote), [1], "QUOTE", [])
     assert evidence[0].provenance == "label"
+
+
+def test_deadline_label_needs_a_request_to_act() -> None:
+    """'bis zum <Datum>' labels a letter's deadline only where the recipient is asked to act; an offer's validity
+    ('gilt bei Buchung bis zum ...') is no deadline label."""
+    path = "bodies.correspondence_body.deadline"
+    offer = ["Ihr Vorteil", "Das Angebot gilt bei Buchung eines Tarifs bis zum 31.03.2031.", "Mit freundlichen Grüßen"]
+    evidence = [_ev(path, "date", "2031-03-31")]
+    assess({"bodies": {"correspondence_body": {"deadline": "2031-03-31"}}}, evidence, _layer(offer), [1], "OTHER", [])
+    assert evidence[0].provenance != "label" and evidence[0].auto_accepted is False
+    request = ["Bitte senden Sie uns die Unterlagen bis zum", "31.03.2031 zurück.", "Mit freundlichen Grüßen"]
+    evidence = [_ev(path, "date", "2031-03-31")]
+    assess({"bodies": {"correspondence_body": {"deadline": "2031-03-31"}}}, evidence, _layer(request), [1], "OTHER", [])
+    assert evidence[0].provenance == "label"
+    explicit = ["Ihre Stellungnahme erwarten wir spätestens am 31.03.2031."]
+    evidence = [_ev(path, "date", "2031-03-31")]
+    assess({"bodies": {"correspondence_body": {"deadline": "2031-03-31"}}}, evidence, _layer(explicit), [1], "OTHER", [])
+    assert evidence[0].provenance == "label"

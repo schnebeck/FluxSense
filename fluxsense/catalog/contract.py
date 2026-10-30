@@ -156,7 +156,7 @@ FIELD_LABELS: Dict[str, Tuple[str, ...]] = {
     "due_date": ("zahlbar bis", "fällig am", "Fälligkeit", "Fälligkeitsdatum", "buchen wir am", "Abbuchung am", "Zahlungsziel",
                  "due date"),
     "payment_due_date": ("wird am", "belastet am", "fällig am", "zahlbar bis", "Abbuchung am", "Lastschrift am"),
-    "deadline": ("bis zum", "bis spätestens", "spätestens", "Frist", "bis"),
+    "deadline": ("bis spätestens", "spätestens", "Frist"),
     "iban": ("IBAN",),
     "opening_balance": ("alter Kontostand", "Kontostand alt", "Saldo alt", "alter Saldo", "Anfangssaldo", "Saldovortrag",
                         "Saldo letzte Abrechnung", "vorheriger Saldo", "Vortrag", "previous balance"),
@@ -169,6 +169,15 @@ FIELD_LABELS: Dict[str, Tuple[str, ...]] = {
     "invoice_number": DOC_NUMBER_ROWS["invoice"].labels,
     "invoice_date": DOC_DATE_ROWS["invoice"].labels,
 }
+
+
+# §6: 'bis zum' / 'bis' label a letter's deadline only on a line (or the line after it) that asks the recipient to act;
+# an offer's or campaign's 'gilt bei Buchung bis zum <Datum>' is no deadline.
+DEADLINE_CONTEXT_LABELS: Tuple[str, ...] = ("bis zum", "bis")
+DEADLINE_DUTY_RE = re.compile(r"(zahl|überweis|ueberweis|einreich|zurücksend|zuruecksend|zurückgeb|zurueckgeb|vorleg|mitteil|"
+                              r"melden|widersprech|widerspruch|einspruch|antwort|rückmeld|rueckmeld|stellungnahme|nachreich|"
+                              r"ausgleich|beglich|begleich|nachweis|unterlagen|kündig|kuendig|einleg|bestätig|bestaetig|"
+                              r"übersend|uebersend|zusend|vorzuleg|einzureich|zu begleichen|zu zahlen)", re.IGNORECASE)
 
 
 # Labels of a party block ('Empfänger' with the name below or after it).

@@ -503,3 +503,44 @@ def test_scribble_ocr_never_reaches_the_extraction(settings: Any, tmp_path: Path
     assert len(ld.signatures) == 1
     sig = ld.signatures[0]
     assert sig.removed_ocr == ["Tbeo Mnster"] and sig.signer_name == doc.facts["contact"] and sig.status == "signed"
+
+
+def test_date_and_signature_on_one_ocr_line(settings: Any, tmp_path: Path) -> None:
+    """A scan where the OCR joins the handwritten date and the signature beside it into one line
+    ('12.09.2024 Tbeo Mnster'): only the date is masked for the ink measurement (signed), the scribble's reading leaves
+    the page text and is reported as removed, the date stays; a place with only a date is empty."""
+    page = Page()
+    page.text(LEFT, 120, "Bestätigung der Wohnungsübergabe", 14, bold=True)
+    page.text(LEFT, 150, "Die Wohnung wurde mit allen Schlüsseln übergeben.", 10)
+    page.text(LEFT, 300, "12.09.2024", 11)
+    page.text(LEFT, 316, "Datum/Unterschrift Vermieter", 7)
+    page.text(LEFT, 420, "12.09.2024", 11)
+    signature(page, LEFT + 80, 418, 4)
+    page.text(LEFT, 436, "Datum/Unterschrift Mieter", 7)
+    pdf = _scan(page, tmp_path / "handover-scan.pdf")
+    items = [_item(page, run.text, run.left(), run.y, run.left() + run.width(), run.size) for run in page.runs
+             if not (run.y == 420)]
+    items.append(_item(page, "12.09.2024 Tbeo Mnster", LEFT, 420, LEFT + 190, 11, y0=404))
+    items.sort(key=lambda i: (i["bbox"][1], i["bbox"][0]))
+    stage2: List[LLMRequest] = []
+
+    def handler(request: LLMRequest) -> Optional[Any]:
+        if request.label.startswith("OCR ovisocr3"):
+            return items
+        if request.label.startswith("Stage 1.0 handwriting"):
+            return {"pages": [{"page": 1, "handwriting": "signature"}]}
+        if request.label.startswith("Stage 1.1"):
+            return {"detected_entities": [{"type_tags": ["OTHER"], "page_indices": [1], "direction": "INBOUND",
+                                           "tenant_context": "PRIVATE", "confidence": 0.9}]}
+        if request.label.startswith("Stage 2"):
+            stage2.append(request)
+            return {"meta_header": {}, "bodies": {}}
+        return None
+
+    settings.extract.engine = "ovisocr3"
+    ld = Analyzer(settings, backend=FakeBackend(handler)).analyze(pdf).logical_documents[0]
+    out = {s.label: s for s in ld.signatures}
+    assert out["Datum/Unterschrift Mieter"].status == "signed"
+    assert out["Datum/Unterschrift Mieter"].removed_ocr == ["Tbeo Mnster"]
+    assert out["Datum/Unterschrift Vermieter"].status == "empty" and out["Datum/Unterschrift Vermieter"].removed_ocr == []
+    assert stage2 and "Tbeo Mnster" not in stage2[0].prompt and "12.09.2024" in stage2[0].prompt
