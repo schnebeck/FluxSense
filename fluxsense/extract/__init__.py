@@ -131,7 +131,9 @@ def build_text_layer(pdf_path: Path, settings: Settings, engine: Optional[str] =
         start = time.monotonic()
         client = backend or OpenAICompatClient(settings.llm, settings.hooks)
         targets = [p for p in pages if settings.extract.ovis_pages != "weak" or p.page in weak_pages]
-        done = OvisEngine(client, settings).apply(pdf_path, targets) if targets else 0
+        engine = OvisEngine(client, settings)
+        done = engine.apply(pdf_path, targets) if targets else 0
+        layer.warnings += engine.warnings
         layer.ocr_applied = bool(weak_pages) and done > 0
         if done < len(targets):
             layer.warnings.append(f"ovisocr3 returned no layout for {len(targets) - done} pages")
