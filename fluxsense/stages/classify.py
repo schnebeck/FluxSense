@@ -299,6 +299,33 @@ def route_private_notes(entities: List[Entity], layer: TextLayer) -> List[Entity
     return entities
 
 
+ROUTE_TO_CERTIFICATE: frozenset = frozenset({"APPLICATION", "OTHER", "LETTER", "NOTE"})
+# Titles of a confirmation of a fact about a person issued by a third party (landlord, employer, school, authority).
+CERTIFICATE_TITLE_RE = re.compile(
+    r"(wohnungsgeberbest[äa]tigung|wohnungsgeberbescheinigung|best[äa]tigung\s+des\s+wohnungsgebers|"
+    r"\w*bescheinigung\b|arbeitgeberbest[äa]tigung|einzugsbest[äa]tigung|auszugsbest[äa]tigung|mietbest[äa]tigung|"
+    r"certificate\s+of\s+\w+)", re.IGNORECASE)
+_NOT_CERTIFICATE_RE = re.compile(r"(antrag\s+auf|anmeldung\s+(?:bei|der|zur)|kündigung|rechnung|invoice)", re.IGNORECASE)
+
+
+def route_certificates(entities: List[Entity], layer: TextLayer) -> List[Entity]:
+    """
+    A confirmation of a fact about a person issued by a third party (landlord's
+    Wohnungsgeberbestätigung, employer's Bescheinigung) that the classifier
+    called APPLICATION / OTHER / LETTER is re-typed CERTIFICATE when its title
+    (first lines of the first page) is a confirmation title and not an
+    application.
+    """
+    for ent in entities:
+        if not ent.type_tags or not set(ent.type_tags) <= ROUTE_TO_CERTIFICATE or not layer.page(ent.pages[0]):
+            continue
+        head = "\n".join([line for line in layer.page(ent.pages[0]).best_text().splitlines() if line.strip()][:8])
+        if CERTIFICATE_TITLE_RE.search(head) and not _NOT_CERTIFICATE_RE.search(head):
+            logger.info(f"Stage 1: pages {ent.pages} re-typed {ent.type_tags} -> CERTIFICATE (confirmation title)")
+            ent.type_tags = ["CERTIFICATE"]
+    return entities
+
+
 def attach_boilerplate(entities: List[Entity], signatures: List[PageSignature]) -> List[Entity]:
     """
     Merges an entity into the preceding one when its first page is blank or
@@ -442,7 +469,7 @@ class Classifier:
             for ent in entities:
                 first = by_page.get(ent.pages[0])
                 ent.letterhead = bool(first and (first.letterhead or first.addressee or first.salutation))
-        entities = route_private_notes(route_transfer_confirmations(entities, layer), layer)
+        entities = route_certificates(route_private_notes(route_transfer_confirmations(entities, layer), layer), layer)
         language = (raw.get("source_file_summary") or {}).get("primary_language")
         result = ClassificationResult(entities=entities, strategy=strategy, preflight=pre, raw=raw, errors=errors,
                                       language=language)

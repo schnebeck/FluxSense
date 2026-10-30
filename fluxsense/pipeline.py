@@ -55,7 +55,7 @@ from fluxsense.stages.correction import TargetedCorrector
 from fluxsense.stages.extract import Extractor
 from fluxsense.stages.identity import (apply_form_semantics, unfilled_form, direction_from_parties, harmonize_parties,
                                       remove_role_labels)
-from fluxsense.stages.repair import (clean_document_numbers, complete_statement_years, drop_bank_statement_due_date,
+from fluxsense.stages.repair import (clean_document_numbers, drop_signature_parties, complete_statement_years, drop_bank_statement_due_date,
                                     drop_form_deadline, enforce_doc_semantics, fix_transfer_confirmation,
                                     fill_tax_basis, sanitize_bank_identifiers, stamps_from_text,
                                     fill_row_amounts, fix_document_dates, fix_document_number, order_payee_accounts,
@@ -67,6 +67,7 @@ from fluxsense.stages.repair import (clean_document_numbers, complete_statement_
 from fluxsense.vision.zoom import ZoomTarget
 from fluxsense.validate import run_plausibility
 from fluxsense.validate.core import CheckContext, score_report
+from fluxsense.validate.contract_terms import check_contract_payment, fix_minimum_term
 from fluxsense.validate.dates import check_dates_consistency
 from fluxsense.wol import lease_for
 
@@ -433,6 +434,10 @@ class Analyzer:
             if transfer_notes:
                 doc.corrections.append(CorrectionRecord(trigger_checks=["transfer"], scope="bank transfer confirmation",
                                                         applied=True, note="; ".join(transfer_notes)))
+        term_notes = fix_minimum_term(fields)
+        if term_notes:
+            doc.corrections.append(CorrectionRecord(trigger_checks=["contract"], scope="minimum term", applied=True,
+                                                    note="; ".join(term_notes)))
         if not xml:
             basis_notes = fill_tax_basis(fields)
             if basis_notes:
@@ -513,7 +518,9 @@ class Analyzer:
                 if ev.path.startswith(("meta_header.sender.", "meta_header.recipient.")) and ev.value is not None \
                         and not holds(fields, ev):
                     ev.original_value, ev.action, ev.status = ev.value, "replaced_by_layout", GroundingStatus.REMOVED
-        if contract_for(contract_type).party_case != "2.4" and sender_only_in_table(meta.get("sender"), layer, pages):
+        # forms filled in by a person and confirmations on printed forms carry the issuer in a form field (table cell)
+        if contract_for(contract_type).party_case != "2.4" and contract_type != "CERTIFICATE" \
+                and sender_only_in_table(meta.get("sender"), layer, pages):
             removed = meta.pop("sender")
             doc.corrections.append(CorrectionRecord(trigger_checks=["parties"], scope="meta_header.sender", applied=True,
                                                     note=f"sender {removed!r} removed: printed only in a table cell, not as letterhead/sender"))
@@ -601,6 +608,11 @@ class Analyzer:
         if self.settings.grounding.self_consistency:
             disagreements = self._self_consistency(prepared, entity, evidence, extra_checks, private_id, business_id)
 
+        signature_notes = drop_signature_parties(fields, evidence, doc_text, outcome.audit, contract_type)
+        if signature_notes:
+            doc.corrections.append(CorrectionRecord(trigger_checks=["parties"], scope="signature-only parties", applied=True,
+                                                    note="; ".join(signature_notes)))
+        extra_checks += check_contract_payment(fields)
         # §9: cross-field date consistency (after grounding / zoom / correction: their readings are final here)
         date_checks, date_notes = check_dates_consistency(fields, evidence, date.today(),
                                                           self.settings.plausibility.future_days_tolerance)

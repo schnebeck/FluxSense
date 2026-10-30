@@ -65,9 +65,23 @@ If extracting into "legal_body":
 - **termination_date:** The date the contract ends IF it has already been cancelled (YYYY-MM-DD).
 - **valid_until:** The fixed expiration or warranty end date (YYYY-MM-DD).
 - **notice_period:** value, unit (DAYS, WEEKS, MONTHS, YEARS), anchor_type (START_OF, END_OF, ANY_TIME), anchor_scope (WEEK, MONTH, QUARTER, HALF_YEAR, YEAR), original_text (raw text, e.g. '6 weeks to quarter end').
+- **minimum_term:** a minimum term or a (mutual) waiver of ordinary termination for a duration ('verzichten
+  wechselseitig auf ihr Recht zur Kündigung für die Dauer von 3 Jahren', 'Mindestlaufzeit 24 Monate'): value, unit,
+  mutual_waiver, original_text. This is NEVER the notice_period; a clause like '... erstmalig nach Ablauf mit
+  gesetzlicher Frist' leaves notice_period empty unless a concrete period of notice is printed.
 - **renewal_clause:** Text describing auto-renewal (e.g., '12 months').
 - **contract_type:** RENTAL, INSURANCE, EMPLOYMENT, etc.
 - **parties:** List of str.
+- **payment_terms:** the recurring payment: amount = the printed TOTAL (e.g. 'monatlich insgesamt zu zahlende Miete'),
+  currency, frequency (MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY, ONCE), due_rule as printed, components = every printed
+  component with label and amount (they add up to the total), payment_account (name = account holder, iban, bic,
+  bank_name) and payment_reference (Verwendungszweck).
+- **deposit:** the security deposit (Kaution) amount.
+- **contract_object:** the object of the contract (rented flat: street, house_number, zip_code, city, location_detail
+  such as 'EG links'; vehicle or meter: identifier).
+- **Certificates / confirmations:** certified_persons (who the confirmation is about), certified_event (MOVE_IN,
+  MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), event_date / event_end_date, subject_address; the issuer is the
+  party that confirms (sender). Handwritten entries on a printed form count.
 """
 
 GUIDE_STATEMENT = """

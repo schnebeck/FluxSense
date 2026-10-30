@@ -13,4 +13,4 @@ Description:    Versioned prompt library (ported from KPaperFlux prompts 2.0.0).
 ------------------------------------------------------------------------------
 """
 
-PROMPT_VERSION: str = "fs-1.4.3+contract-1.4+kpf-2.0.0"
+PROMPT_VERSION: str = "fs-1.5.0+contract-1.5+kpf-2.0.0"

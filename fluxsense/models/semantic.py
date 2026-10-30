@@ -159,6 +159,50 @@ class NoticePeriod(BaseModel):
     original_text: Optional[str] = Field(None, description="Raw extracted text for verification")
 
 
+class MinimumTerm(BaseModel):
+    """Minimum term / mutual waiver of termination (field contract §10) - never the notice period."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    value: Optional[int] = Field(None, description="Duration during which ordinary termination is excluded (e.g. 3)")
+    unit: Optional[str] = Field(None, description="MUST be: MONTHS, YEARS")
+    mutual_waiver: Optional[bool] = Field(None, description="True if both parties waive their right to terminate")
+    original_text: Optional[str] = Field(None, description="The clause as printed (short)")
+
+
+class AmountComponent(BaseModel):
+    """One printed component of a recurring payment ('Grundmiete', 'Betriebskostenpauschale')."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    label: Optional[str] = Field(None, description="Component label as printed")
+    amount: Optional[Decimal] = Field(None, description="Component amount as printed")
+
+
+class ContractPayment(BaseModel):
+    """Recurring payment of a contract (rent, lease, subscription, loan instalment, premium)."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    amount: Optional[Decimal] = Field(None, description="Printed TOTAL recurring amount (e.g. total monthly rent)")
+    currency: Optional[str] = None
+    frequency: Optional[str] = Field(None, description="MUST be: MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY, ONCE")
+    due_rule: Optional[str] = Field(None, description="When the payment is due, as printed (e.g. 'monatlich im Voraus')")
+    components: List[AmountComponent] = Field(default_factory=list, description="Printed components of the total")
+    payment_account: Optional[AddressInfo] = Field(None, description="Payee account: name (holder), iban, bic, bank_name")
+    payment_reference: Optional[str] = Field(None, description="Verwendungszweck / payment reference as printed")
+
+
+class SubjectAddress(BaseModel):
+    """Address or identifier of the object of a contract or certificate (rented flat, vehicle, insured object)."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    description: Optional[str] = Field(None, description="Object as printed (e.g. 'Wohnung', vehicle, policy object)")
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+    zip_code: Optional[str] = None
+    city: Optional[str] = None
+    location_detail: Optional[str] = Field(None, description="Floor / position as printed (e.g. 'EG links', '2. OG')")
+    identifier: Optional[str] = Field(None, description="Object identifier (vehicle id, meter number), if printed")
+
+
 class LegalBody(BaseModel):
     """Enhanced data model for contracts and legal documents."""
 
@@ -174,9 +218,19 @@ class LegalBody(BaseModel):
     termination_date: Optional[str] = None
     valid_until: Optional[str] = None
     notice_period: Optional[NoticePeriod] = Field(default_factory=NoticePeriod)
+    minimum_term: Optional[MinimumTerm] = Field(None, description="Minimum term / mutual termination waiver (not the notice period)")
     renewal_clause: Optional[str] = None
     contract_type: Optional[str] = None
     parties: List[str] = Field(default_factory=list)
+    payment_terms: Optional[ContractPayment] = Field(None, description="Recurring payment (rent, instalment, premium)")
+    deposit: Optional[Decimal] = Field(None, description="Security deposit (Kaution) as printed")
+    contract_object: Optional[SubjectAddress] = Field(None, description="Object of the contract (rented property, vehicle)")
+    certified_persons: List[str] = Field(default_factory=list, description="Certificate: the person(s) the confirmation is about")
+    certified_event: Optional[str] = Field(None, description="Certificate: confirmed event, MUST be: MOVE_IN, MOVE_OUT, "
+                                                             "EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER")
+    event_date: Optional[str] = Field(None, description="Certificate: date of the confirmed event (YYYY-MM-DD)")
+    event_end_date: Optional[str] = Field(None, description="Certificate: end of a confirmed period (YYYY-MM-DD)")
+    subject_address: Optional[SubjectAddress] = Field(None, description="Certificate: the address the confirmation is about")
 
 
 class SubscriptionInfo(BaseModel):

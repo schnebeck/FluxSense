@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Field contract 1.5: contract payment terms (total, components with a
+  sum check, frequency, due rule, payee account, reference), deposit and
+  contract object; minimum term / termination waiver separate from the
+  notice period; names read only from signatures are no parties (§2.9);
+  landlord / employer confirmations are certificates with the certified
+  persons, event, date and address; form print numbers are no doc_number.
 - Field contract 1.4, §9 date consistency: the document date is checked
   against the document's other dates (contract start, due / order /
   service dates, statement period, reply deadline) in type-aware windows;

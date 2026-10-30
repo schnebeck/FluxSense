@@ -179,6 +179,19 @@ def replay_deterministic(doc: Any, layer: TextLayer) -> List[str]:
     return notes
 
 
+def replay_contract_rules(doc: Any, layer: TextLayer) -> List[str]:
+    """§2.9 / §10: signature-only parties, minimum term vs notice period and the contract payment sum on a saved document."""
+    from fluxsense.stages.repair import drop_signature_parties
+    from fluxsense.validate.contract_terms import CHECK_PAYMENT_SUM, check_contract_payment, fix_minimum_term
+    from fluxsense.validate.core import score_report
+    fields = doc.fields if isinstance(doc.fields, dict) else {}
+    text = "\n".join(layer.page(p).best_text() for p in doc.pages if layer.page(p))
+    notes = drop_signature_parties(fields, doc.evidence, text, doc.visual_audit, contract_type(doc)) + fix_minimum_term(fields)
+    checks = [c for c in doc.plausibility.checks if c.check_id != CHECK_PAYMENT_SUM] + check_contract_payment(fields)
+    doc.plausibility = score_report(checks)
+    return notes
+
+
 def replay_date_consistency(doc: Any) -> List[str]:
     """§9: re-runs the cross-field date check (and the ambiguous-year decision) on a saved document."""
     from datetime import date
@@ -204,7 +217,7 @@ def reassess_result(result: AnalysisResult, layer: TextLayer, layout: bool = Tru
             for note in replay_layout(doc, layer) + replay_deterministic(doc, layer):
                 logger.info(f"{result.source.path}: {note}")
         fields = doc.fields if isinstance(doc.fields, dict) else {}
-        for note in replay_date_consistency(doc):
+        for note in replay_contract_rules(doc, layer) + replay_date_consistency(doc):
             logger.info(f"{result.source.path}: {note}")
         hint = {(e.path, str(e.value)) for e in doc.evidence if e.provenance == "geometry"}
         evidence: List[FieldEvidence] = [e for e in doc.evidence if e.action != "synthesized"]

@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.4 (2026-10-30). This contract defines what each core field of a
+Version 1.5 (2026-10-30). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -62,6 +62,15 @@ log entries are never parties.
 
 `sender` and `recipient` are never the same party.
 
+**2.9 Signatures.** A name read only from a signature or a handwritten
+signature line (`Unterschrift`, `Datum/Unterschrift Mieter`, `gez.`) is no
+party: it becomes sender or recipient only if the same name is printed or
+written elsewhere as a party. A reading that is not in the text at all and
+points to a signature (its snippet is a signature line, or it carries the
+other party's surname) is removed; a sender of a letter without a printed
+sender stays empty. Forms filled in by a person (§2.4) are exempt: their
+signer is the sender.
+
 ## 3. doc_date
 
 | Type | doc_date | Labels (in priority order) |
@@ -95,7 +104,9 @@ its case / proceedings number is the sender's own reference. Labels:
 `Verfahren`, `…verfahren <nr>`, `Az.`, `Aktenzeichen`.
 
 Never a doc_number: headings (`RECHNUNG RK7`), page numbers (`1/2`),
-form codes in margins, ZIP codes, account/card/customer numbers on
+form codes in margins, form print numbers (a dotted digit code that is no
+date on one of the last lines of a page, e.g. 32.9.021, or a value after
+Formular / Vordruck / Form), ZIP codes, account/card/customer numbers on
 statements, third parties' case numbers when the sender's own reference
 is printed, transaction IDs.
 
@@ -175,3 +186,43 @@ dates; `other - doc_date` must lie in the window (days):
   is flagged.
 - A zoom-verified value that still conflicts loses its visual support (it
   counts as ungrounded).
+
+## 10. Contracts: payment terms and duration
+
+Contracts with recurring payments (rent, lease, subscriptions, loans) and
+insurance policies carry their payment terms in `legal_body`:
+
+- `payment_terms`: `amount` = the printed TOTAL recurring amount
+  (`monatlich insgesamt zu zahlende Miete`), `currency`, `frequency`
+  (MONTHLY, QUARTERLY, HALF_YEARLY, YEARLY, ONCE), `due_rule` as printed,
+  `components` = every printed component (`label`, `amount`),
+  `payment_account` (holder as `name`, `iban`, `bic`, `bank_name`) and
+  `payment_reference` (`Verwendungszweck`).
+- `deposit`: the security deposit (`Kaution`).
+- `contract_object`: the object of the contract - a rented property
+  (`street`, `house_number`, `zip_code`, `city`, `location_detail` such as
+  `EG links`), a vehicle or meter (`identifier`).
+- Check `contract.payment_sum`: two or more printed components must add
+  up to the printed total (tolerance 0.01); when they do, the total and the
+  components have provenance `check`. The payee IBAN gets the usual mod-97
+  check and grounding.
+- `minimum_term` (`value`, `unit`, `mutual_waiver`, `original_text`): a
+  minimum term or a (mutual) waiver of ordinary termination for a duration
+  (`verzichten wechselseitig auf ihr Recht zur Kündigung für die Dauer von 3
+  Jahren`, `Mindestlaufzeit`). It is never the `notice_period`, which holds
+  only a printed period of notice; `... erstmalig nach Ablauf ... mit
+  gesetzlicher Frist` leaves `notice_period` empty. A waiver the model put
+  into `notice_period` is moved to `minimum_term`.
+
+## 11. Certificates and confirmations
+
+- A form confirming a fact about a person and issued by a third party
+  (landlord's `Wohnungsgeberbestätigung`, employer's `Bescheinigung`) is a
+  CERTIFICATE, also when it is filled in by hand on a printed form; a
+  LETTER / OTHER / APPLICATION answer with such a title is re-typed.
+- Sender = the issuer (landlord, employer, school, authority); the
+  issuer's name in a form field counts as printed.
+- `legal_body`: `certified_persons`, `certified_event` (MOVE_IN, MOVE_OUT,
+  EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), `event_date` /
+  `event_end_date`, `subject_address` (with `location_detail`), as printed or
+  written.

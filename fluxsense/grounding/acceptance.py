@@ -45,6 +45,7 @@ from fluxsense.layout import din5008
 from fluxsense.models.result import CheckResult, CheckStatus, FieldEvidence, GroundingStatus
 from fluxsense.stages.identity import is_role_label, unfilled_form
 from fluxsense.stages.repair import sender_only_in_table, stamp_dates
+from fluxsense.validate.contract_terms import payment_checked_paths
 from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR, date_check_messages
 
 LABEL, GEOMETRY, CHECK, MODEL = "label", "geometry", "check", "model"
@@ -155,6 +156,7 @@ def checked_paths(fields: Dict[str, Any]) -> Set[str]:
     if rows and opening is not None and all(b is not None for b in bookings) and \
             _close(opening + sum(bookings, Decimal(0)), closing):  # type: ignore[arg-type]
         paths |= {f"{ST}.opening_balance", f"{ST}.closing_balance"}
+    paths |= payment_checked_paths(fields)  # §10: contract payment components add up to the printed total
     return paths - inconsistent_amounts(fields)
 
 

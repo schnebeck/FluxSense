@@ -100,18 +100,34 @@ def _finance(name: str, description: str, rules: Tuple[str, ...] = FIN_RULES, au
                     required_fields=required, audit_mode=audit, zugferd=zugferd)
 
 
+PAYMENT_QUESTIONS: Tuple[str, ...] = (
+    "Recurring payment (rent, lease, instalment, premium): the printed TOTAL amount, its currency and frequency, when it "
+    "is due, and each printed component with its label and amount (payment_terms); the payee account (holder, IBAN, "
+    "BIC) and the payment reference (Verwendungszweck)?",
+    "Deposit (Kaution) and the object of the contract (address of the rented property with floor/position, vehicle, "
+    "insured object) as printed?",
+    "Minimum term or mutual waiver of termination ('verzichten auf ihr Recht zur Kündigung für die Dauer von ...', "
+    "'Mindestlaufzeit') goes to minimum_term - it is NOT the notice period; notice_period only for the period of notice "
+    "itself (empty for a plain 'gesetzliche Frist')?")
+CERTIFICATE_QUESTIONS: Tuple[str, ...] = (
+    "Who issued the confirmation (landlord, employer, school, authority) and who is it about (certified_persons)?",
+    "Which event or fact is confirmed (certified_event: MOVE_IN, MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), "
+    "on which date (event_date) or for which period (event_date .. event_end_date), and for which address "
+    "(subject_address, with floor/position)? Handwritten entries on a printed form count.")
+
+
 def _legal(name: str, description: str, audit: str = AUDIT_FULL, extra: Tuple[str, ...] = (),
-           kpf_type: Optional[str] = None) -> TypeSpec:
-    """Builds a legal_body type."""
+           kpf_type: Optional[str] = None, more: Tuple[str, ...] = ()) -> TypeSpec:
+    """Builds a legal_body type (more: additional type-specific questions)."""
     return TypeSpec(
         name=name, description=description, body_key="legal_body", extra_bodies=extra, kpf_type=kpf_type,
         questions=("What is the exact document title and the contract/policy/reference number? The sender's reference "
                    "('Unser Zeichen', 'Aktenzeichen', 'Vorgangs-/Schadennummer') is meta_header.doc_number; print or form "
-                   "codes in footers or margins are never document numbers.",
+                   "codes in footers or margins (e.g. '32.9.021', 'Form 1234') are never document numbers.",
                    "Who is the issuer and who is the beneficiary? Which parties are named?",
                    "Effective date, valid-until date, termination date (only if already cancelled)?",
                    "Notice period (value, unit, anchor) and renewal clause, quoted as printed?",
-                   "Key statements or obligations (short, as printed)?"),
+                   "Key statements or obligations (short, as printed)?") + more,
         rules=("dates", "completeness", "identity"),
         critical_fields=("bodies.legal_body.contract_id", "bodies.legal_body.effective_date",
                          "bodies.legal_body.valid_until", "meta_header.doc_date"),
@@ -208,9 +224,12 @@ def build_catalog() -> Catalog:
                        ("LEGAL_CORRESPONDENCE", "Letter from or to a court, lawyer (Anwalt), arbitration board (Schlichtungsstelle), ombudsman "
                         "or consumer advice centre about proceedings or a complaint (Schlichtungsverfahren, Beschwerde, "
                         "Klage, Aktenzeichen of the proceeding) - also a bank's or company's statement addressed to the ombudsman")):
-        cat.register(_legal(name, desc))
-    cat.register(_legal("CERTIFICATE", "Zertifikat, Bescheinigung, Nachweis, Zeugnis, Konformitätserklärung; test/inspection reports "
-                        "(Prüfbericht, Testing report, Messprotokoll, Safety checks) with their check lists", audit=AUDIT_NONE))
+        cat.register(_legal(name, desc, more=PAYMENT_QUESTIONS if name in ("CONTRACT", "INSURANCE_POLICY") else ()))
+    cat.register(_legal("CERTIFICATE", "Zertifikat, Bescheinigung, Nachweis, Zeugnis, Konformitätserklärung; a confirmation of a "
+                        "fact about a person issued by a third party (Wohnungsgeberbestätigung of a landlord, "
+                        "Arbeitgeberbescheinigung), also when filled in by hand on a printed form; test/inspection reports "
+                        "(Prüfbericht, Testing report, Messprotokoll, Safety checks) with their check lists", audit=AUDIT_NONE,
+                        more=CERTIFICATE_QUESTIONS))
     cat.register(_legal("OFFICIAL_LETTER", "Behördenschreiben, Bescheid (not Steuerbescheid), formal letter of a bank, insurer or company to the customer "
                         "about a case (not addressed to a court/ombudsman)",
                         extra=("correspondence_body",)))

@@ -178,6 +178,24 @@ REFERENCE_LABEL_RE = re.compile(r"(zeichen|aktenzeichen|az\.?|nr\.?|nummer|numbe
                                 r"vertrag|referenz|reference|ticket|fall|police|versicherungsschein|bescheid|steuer)", re.IGNORECASE)
 
 
+# Form print numbers: dotted digit groups that are no date ('32.9.021'), or a code after 'Formular' / 'Vordruck' / 'Form'.
+FORM_PRINT_CODE_RE = re.compile(r"^\d{1,3}(?:\.\d{1,4}){2,3}$")
+
+
+def printed_form_code(value: str, page: PageText) -> bool:
+    """
+    §4: a form print number from the text alone: a dotted digit code that is
+    no valid date printed on one of the last three lines of the page, or a
+    value printed right after 'Formular' / 'Vordruck' / 'Form (Nr.)'.
+    """
+    text = page.sources.get("native") or page.best_text()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if FORM_PRINT_CODE_RE.match(value.strip()) and parse_date(value) is None and any(value in line for line in lines[-3:]):
+        return True
+    pattern = re.compile(rf"\b(?:formular|vordruck|form)\s*(?:nr\.?|-?nummer)?\s*:?\s*{re.escape(value.strip())}", re.IGNORECASE)
+    return any(pattern.search(line) for line in lines)
+
+
 def is_form_code(value: Any, snippet: Optional[str], page: Optional[PageText]) -> bool:
     """
     True if a doc_number candidate looks like a print/form code: no reference
@@ -192,9 +210,13 @@ def is_form_code(value: Any, snippet: Optional[str], page: Optional[PageText]) -
     Returns:
         True if the value should not be used as document number.
     """
-    if not value or page is None or not page.words:
+    if not value or page is None:
         return False
     if snippet and REFERENCE_LABEL_RE.search(snippet.replace(str(value), "")):
+        return False
+    if printed_form_code(str(value), page):
+        return True
+    if not page.words:
         return False
     from fluxsense.vision.zoom import find_words
     rect = find_words(page.words, str(value))
@@ -1008,3 +1030,85 @@ def stamps_from_text(audit: Dict[str, Any], text: str) -> int:
         audit["layer_stamps"] = stamps
         audit.setdefault("audit_summary", {})["was_stamp_interference"] = True
     return len(stamps)
+
+
+# §2.9: signature lines ('Datum/Unterschrift Mieter', 'Unterschrift', 'gez.') - a name read there is no party by itself.
+SIGNATURE_LABEL_RE = re.compile(r"(unterschrift|signature|\bgez\.|ort\s*,?\s*/?\s*datum\s*/\s*unterschrift)", re.IGNORECASE)
+
+
+def signature_context(lines: List[str], index: int) -> bool:
+    """True for a signature label line and the lines directly above / below it."""
+    return any(0 <= j < len(lines) and SIGNATURE_LABEL_RE.search(lines[j]) for j in (index - 1, index, index + 1))
+
+
+def party_printed_outside_signatures(name: str, lines: List[str]) -> Optional[bool]:
+    """
+    Whether a party name is printed as a party: True if all its words occur
+    on one line outside the signature context, False if it occurs only in the
+    signature context, None if it is not printed at all.
+    """
+    tokens = [t.lower() for t in re.findall(r"[\wäöüß]+", name) if len(t) > 1]
+    if not tokens:
+        return None
+    hits = [i for i, line in enumerate(lines) if all(t in line.lower() for t in tokens)]
+    if not hits:
+        return None
+    return any(not signature_context(lines, i) for i in hits)
+
+
+def has_signature_lines(text: str) -> bool:
+    """True if the text prints a signature label ('Unterschrift', 'Datum/Unterschrift')."""
+    return SIGNATURE_LABEL_RE.search(text) is not None
+
+
+def drop_signature_parties(fields: Dict[str, Any], evidence: List[Any], text: str, audit: Optional[Dict[str, Any]],
+                           type_name: str = "OTHER") -> List[str]:
+    """
+    §2.9: a sender / recipient name that is not printed as a party is
+    removed when the document has signature lines or a handwriting /
+    signature audit and the name occurs only in the signature context, or
+    is not in the text layer at all (ungrounded) and points to a signature
+    (its snippet is a signature line, or it carries the other party's
+    surname). Other unprinted names stay, flagged by the acceptance. Forms
+    filled in by a person (§2.4) are exempt: their signer is the sender.
+
+    Returns:
+        Notes about removed parties.
+    """
+    from fluxsense.models.result import GroundingStatus
+    if contract_for(type_name).party_case == "2.4":
+        return []  # a form's filler is the person who signs (§2.4)
+    lines = text.splitlines()
+    signed = has_signature_lines(text) or bool((audit or {}).get("has_handwriting")) or \
+        bool(((audit or {}).get("signatures") or {}).get("has_signature")) or \
+        bool(((audit or {}).get("audit_summary") or {}).get("has_handwriting"))
+    if not signed:
+        return []
+    meta = fields.get("meta_header") or {}
+    notes: List[str] = []
+    for role in ("sender", "recipient"):
+        party = meta.get(role)
+        if not isinstance(party, dict):
+            continue
+        for key in ("name", "company"):
+            value = party.get(key)
+            if not value:
+                continue
+            printed = party_printed_outside_signatures(str(value), lines)
+            path = f"meta_header.{role}.{key}"
+            ev = next((e for e in evidence if e.path == path), None)
+            ungrounded = ev is not None and ev.status not in (GroundingStatus.GROUNDED, GroundingStatus.VERIFIED)
+            other = party_names(fields, "recipient" if role == "sender" else "sender").lower().split()
+            words = str(value).lower().split()
+            # an unprinted reading points to a signature: its snippet is a signature line, or it carries the other
+            # party's surname (the other party's own signature read as a second person)
+            from_signature = bool(ev is not None and ev.evidence and SIGNATURE_LABEL_RE.search(str(ev.evidence))) or \
+                bool(words and other and words[-1] in other and str(value).lower() not in " ".join(other))
+            if printed is False or (printed is None and ungrounded and from_signature):
+                party.pop(key)
+                notes.append(f"{role}.{key} {value!r} removed: read from a signature only, not printed as a party (§2.9)")
+                if ev is not None:
+                    ev.original_value, ev.action, ev.status = ev.value, "nulled", GroundingStatus.REMOVED
+        if not any(party.get(k) for k in ("name", "company")):
+            meta.pop(role, None)
+    return notes

@@ -32,10 +32,10 @@ from fluxsense.models.result import FieldEvidence
 CODE_FIELDS: frozenset = frozenset({
     "currency", "country", "language", "unit", "tax_category", "statement_type", "category", "frequency",
     "contract_type", "transaction_type", "anchor_type", "anchor_scope", "ref_type", "summary",
-    "requested_action", "next_billing_date", "is_recurring", "source_page",
+    "requested_action", "next_billing_date", "is_recurring", "source_page", "certified_event", "mutual_waiver",
 })
 DATE_FIELDS: frozenset = frozenset({"service_period_start", "service_period_end", "period_start", "period_end",
-                                    "valid_until", "deadline", "pay_period_start", "pay_period_end"})
+                                    "valid_until", "deadline", "pay_period_start", "pay_period_end", "event_end_date"})
 IDENT_FIELDS: frozenset = frozenset({"bic", "vat_id", "tax_id", "pos", "zip_code", "house_number", "phone", "email",
                                      "card_number_masked", "reference", "tax_class", "ref_value", "article_number"})
 
