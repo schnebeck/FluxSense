@@ -197,8 +197,12 @@ for doc in result.logical_documents:
 1. **Text layer.** Native PDF text and word boxes always; for scans and
    weak pages OCR (OvisOCR3, ocrmypdf or Docling).
 2. **Segmentation and classification.** Page signatures (letterhead, date,
-   page numbering, salutation, closing) and the vision model split a stack
-   into logical documents and assign types from the catalog.
+   page numbering, salutation, closing, handwriting level) and the vision
+   model split a stack into logical documents and assign types from the
+   catalog.
+   Form fields are read by their label, routed by the page's handwriting
+   level (signature only, handwritten entries, freely handwritten);
+   signature places get a status and a signer from printed content.
 3. **Holistic extraction.** One structured call per logical document with
    the page images, the auxiliary text and the type's questions. Long item
    tables are extracted page by page in parallel and stitched. An embedded
@@ -222,7 +226,8 @@ for doc in result.logical_documents:
   `finance_body`, `statement_body`, `correspondence_body`), `tables`,
   `plausibility` (all checks), `evidence` (per field: value, page,
   snippet, grounding status, provenance, `auto_accepted`,
-  `review_reasons`), `trust`, `corrections`;
+  `review_reasons`), `trust`, `corrections`, `handwriting` (level per
+  page), `form_fields` and `signatures`;
 - `timings` and `ai_calls` (model, tokens, seconds).
 
 The field layout follows the KPaperFlux `SemanticExtraction` model with

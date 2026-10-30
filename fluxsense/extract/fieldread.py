@@ -8,16 +8,23 @@ Version:        0.1.0
 Producer:       thorsten.schnebeck@gmx.net
 Generator:      Claude Opus 5.5
 Description:    Form fields read by their printed label (field contract
-                §12). On form-like pages the printed labels are found in the
-                layout ('Ort, Datum', 'Einzug am', 'Name des ...', '..., den')
-                with a lexicon that also gives the field kind; the entry
-                region next to, above or below each label is cropped from
+                §12), routed by the page's handwriting level: a page with
+                only a signature reads its date / signature lines alone; a
+                printed form with handwritten entries is read form-first
+                (the vision model locates the label / entry pairs on the
+                page, the lexicon only gives the kind); other scanned form
+                pages find the printed labels in the layout ('Ort, Datum',
+                'Einzug am', 'Name des ...', '..., den') with a lexicon that
+                also gives the field kind. Each entry region is cropped from
                 the scan's native resolution and read by the vision model
                 with an open question plus a type hint - never with the
-                full-page value, so the reading is not anchored. Dates are
-                normalised to ISO with their candidate readings
-                ('1|10|26': bars may be separators or ones). The readings
-                become a FORM FIELDS block of the page text and the
+                full-page value, so the reading is not anchored - and the
+                reader says whether the entry is typed, handwritten or
+                empty. Native AcroForm fields of digital PDFs are read from
+                their widgets without vision. Dates are normalised to ISO
+                with their candidate readings ('1|10|26': bars may be
+                separators or ones; typed dates have one reading). The
+                readings become a FORM FIELDS block of the page text and the
                 'fieldread' text source used by grounding.
 ------------------------------------------------------------------------------
 """
@@ -28,7 +35,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from PIL import Image
 
@@ -42,9 +49,15 @@ from fluxsense.pdflock import PYMUPDF_LOCK
 logger = get_logger("extract.fieldread")
 
 SOURCE_FIELDREAD = "fieldread"
-DATE, PLACE_DATE, NAME, PERSONS, ADDRESS, LOCATION, PHONE, TEXT = (
-    "date", "place_date", "name", "persons", "address", "location", "phone", "text")
+DATE, PLACE_DATE, NAME, PERSONS, ADDRESS, LOCATION, PHONE, TEXT, CHECKBOX = (
+    "date", "place_date", "name", "persons", "address", "location", "phone", "text", "checkbox")
+KINDS: Tuple[str, ...] = (DATE, PLACE_DATE, NAME, PERSONS, ADDRESS, LOCATION, PHONE, TEXT, CHECKBOX)
 EMPTY = "EMPTY"
+TYPED, HANDWRITTEN, BLANK = "typed", "handwritten", "empty"
+SCRIPTS: Tuple[str, ...] = (TYPED, HANDWRITTEN, BLANK)
+# How a field was found: a lexicon label in the layout, the vision model's form locator, or a digital AcroForm widget.
+FOUND_LABEL, FOUND_LOCATOR, FOUND_ACROFORM = "label", "locator", "acroform"
+MARKERS: Dict[str, str] = {TYPED: "[typed]", HANDWRITTEN: "[handwritten]", FOUND_ACROFORM: "[form field]"}
 MAX_FIELDS: int = 24
 MIN_LABELS: int = 3
 
@@ -101,9 +114,10 @@ TYPE_HINTS: Dict[str, str] = {
 }
 PROMPT = ('This is a crop of a German form. The printed label of the field is: "{label}". Read only the handwritten (or '
           'typed) ENTRY that belongs to this label - not the printed labels. If the field is empty answer EMPTY. {hint} '
-          'If the handwriting allows several readings, list every plausible ISO date in "candidates". '
+          'If the handwriting allows several readings, list every plausible ISO date in "candidates". Say how the entry '
+          'is written: "typed" (printed, typewriter or computer), "handwritten" or "empty". '
           'Answer as JSON: {{"entry": "<the entry as written, or EMPTY>", "iso": "<ISO date or null>", '
-          '"candidates": ["<ISO date>", ...]}}')
+          '"candidates": ["<ISO date>", ...], "script": "typed" | "handwritten" | "empty"}}')
 CHECKBOX_SCHEMA: Dict[str, Any] = {"type": "object", "additionalProperties": False,
                                    "properties": {"state": {"type": "string", "enum": ["yes", "no", "no checkbox"]}},
                                    "required": ["state"]}
@@ -111,8 +125,24 @@ SCHEMA: Dict[str, Any] = {"type": "object", "additionalProperties": False,
                           "properties": {"entry": {"type": "string", "maxLength": 200},
                                          "iso": {"type": ["string", "null"], "maxLength": 10},
                                          "candidates": {"type": "array", "items": {"type": "string", "maxLength": 10},
-                                                        "maxItems": 4}},
+                                                        "maxItems": 4},
+                                         "script": {"type": "string", "enum": list(SCRIPTS)}},
                           "required": ["entry"]}
+LOCATE_PROMPT = ('This page is a printed form that has been filled in. List its fields in reading order, at most {limit}: '
+                 'the printed LABEL of each field (verbatim) and the box of its ENTRY (where the value is written or '
+                 'typed), both as [x0, y0, x1, y1] relative to the page in 0-1000. Say how each entry is written: "typed", '
+                 '"handwritten" or "empty"; for a checkbox say whether it is ticked. Do not transcribe the entries. A '
+                 'signature is no field. Answer as JSON: {{"fields": [{{"label": "...", "label_box": [x0, y0, x1, y1], '
+                 '"entry_box": [x0, y0, x1, y1], "kind": "date | place_date | name | persons | address | location | phone '
+                 '| text | checkbox", "script": "typed | handwritten | empty", "ticked": true | false | null}}]}}')
+_BOX: Dict[str, Any] = {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}
+LOCATE_SCHEMA: Dict[str, Any] = {
+    "type": "object", "additionalProperties": False, "required": ["fields"],
+    "properties": {"fields": {"type": "array", "maxItems": MAX_FIELDS, "items": {
+        "type": "object", "additionalProperties": False, "required": ["label", "entry_box"],
+        "properties": {"label": {"type": "string", "maxLength": 90}, "label_box": _BOX, "entry_box": _BOX,
+                       "kind": {"type": "string", "enum": list(KINDS)}, "script": {"type": "string", "enum": list(SCRIPTS)},
+                       "ticked": {"type": ["boolean", "null"]}}}}}}
 
 
 @dataclass
@@ -130,11 +160,23 @@ class FormField:
     candidates: List[str] = field(default_factory=list)
     ticked: Optional[bool] = None  # checkbox before the label: True ticked, False unticked, None no box / unknown
     inside: bool = False  # the layout item already contains the entry after the label ('Musterstadt, den 71806')
+    script: Optional[str] = None  # typed | handwritten | empty as the reader saw it (None: not reported)
+    found: str = FOUND_LABEL  # label (lexicon label in the layout) | locator (vision form locator) | acroform (widget)
 
     @property
     def empty(self) -> bool:
         """True if the field was read as empty."""
         return self.entry is not None and self.entry.strip().upper() in ("", EMPTY)
+
+    @property
+    def handwritten(self) -> bool:
+        """True unless the entry is known to be typed or a digital form value (an unreported script counts as handwriting)."""
+        return self.found != FOUND_ACROFORM and self.script != TYPED
+
+    def marker(self) -> str:
+        """'[typed] ', '[handwritten] ', '[form field] ' or '' (script not reported) before the label of a filled entry."""
+        key = FOUND_ACROFORM if self.found == FOUND_ACROFORM else self.script or ""
+        return f"{MARKERS[key]} " if key in MARKERS else ""
 
     def line(self) -> str:
         """The FORM FIELDS line of this field."""
@@ -142,12 +184,13 @@ class FormField:
             return f"{self.label}: (not read)"
         if self.empty:
             return f"{self.label}: (empty)"
+        head = f"{self.marker()}{self.label}"
         if self.value and self.value != self.entry:
             alt = f" (readings: {', '.join(self.candidates)})" if len(self.candidates) > 1 else ""
-            return f"{self.label}: {self.entry} -> {self.value}{alt}"
+            return f"{head}: {self.entry} -> {self.value}{alt}"
         if self.kind == NAME and not self.target:
-            return f"{self.label}: {self.entry} [a name field of the form - not by itself the sender or recipient]"
-        return f"{self.label}: {self.entry}"
+            return f"{head}: {self.entry} [a name field of the form - not by itself the sender or recipient]"
+        return f"{head}: {self.entry}"
 
 
 def classify_label(text: str) -> Optional[LabelRule]:
@@ -158,14 +201,17 @@ def classify_label(text: str) -> Optional[LabelRule]:
     return next((rule for rule in LEXICON if rule.pattern.search(clean)), None)
 
 
-def find_labels(page: PageText) -> List[FormField]:
+Box = Tuple[float, float, float, float]
+
+
+def page_lines(page: PageText) -> List[Tuple[str, Box]]:
     """
-    Printed field labels of a page: layout items (OvisOCR3 / Docling, bbox
-    0-1000) or native text lines, matched against the lexicon. A label item
-    that already carries text after the label keeps only the label part.
+    Text lines of a page with their boxes in page points: the lines of the
+    layout items (OvisOCR3 / Docling, bbox 0-1000; a multi-line item is split
+    into equal bands), else the native / OCR word boxes grouped into lines.
     """
     width, height = page.width or 595.0, page.height or 842.0
-    candidates: List[Tuple[str, Tuple[float, float, float, float]]] = []
+    candidates: List[Tuple[str, Box]] = []
     for item in page.items or []:
         if item.category in ("image", "table") or not item.content.strip():
             continue
@@ -178,6 +224,16 @@ def find_labels(page: PageText) -> List[FormField]:
     if not candidates and page.words:
         from fluxsense.layout.din5008 import group_lines
         candidates = [(line.text, (line.x0, line.y0, line.x1, line.y1)) for line in group_lines(page.words)]
+    return candidates
+
+
+def find_labels(page: PageText) -> List[FormField]:
+    """
+    Printed field labels of a page: layout items (OvisOCR3 / Docling, bbox
+    0-1000) or native text lines, matched against the lexicon. A label item
+    that already carries text after the label keeps only the label part.
+    """
+    candidates = page_lines(page)
     fields: List[FormField] = []
     boxes = [(normalize_checkbox(text).strip(), box) for text, box in candidates if _BOX_ONLY_RE.match(normalize_checkbox(text))]
     for text, box in candidates:
@@ -281,6 +337,27 @@ def ink_share(image: Image.Image, page_width: float, page_height: float, box: Tu
     return sum(histogram[:160]) / max(1, crop.width * crop.height)
 
 
+def dark_rows(image: Image.Image) -> List[float]:
+    """Share of dark pixels (< 160) of every pixel row of an image."""
+    binary = image.convert("L").point(lambda v: 255 if v < 160 else 0)
+    column = binary.resize((1, binary.height), Image.Resampling.BOX)
+    return [v / 255 for v in column.tobytes()]
+
+
+def stroke_share(image: Image.Image, page_width: float, page_height: float, box: Tuple[float, float, float, float],
+                 rule_share: float = 0.35) -> float:
+    """
+    Share of dark pixels of a page-point box without printed rules: pixel
+    rows that are dark over more than rule_share of the width (an entry or
+    signature line, a box border) do not count - pen strokes and letters do.
+    """
+    sx, sy = image.width / page_width, image.height / page_height
+    crop = image.crop((int(box[0] * sx), int(box[1] * sy), max(int(box[0] * sx) + 1, int(box[2] * sx)),
+                       max(int(box[1] * sy) + 1, int(box[3] * sy))))
+    rows = dark_rows(crop)
+    return sum(r for r in rows if r <= rule_share) / max(1, len(rows))
+
+
 def form_like(page: PageText, labels: Sequence[FormField], handwriting: bool) -> bool:
     """
     Trigger: a scanned page (no native text layer: a digital page prints its
@@ -302,13 +379,15 @@ def _expand_year(year: str) -> int:
     return value + (2000 if value < 70 else 1900) if len(year) == 2 else value
 
 
-def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional[date] = None) -> List[str]:
+def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional[date] = None,
+                    handwritten: bool = True) -> List[str]:
     """
     ISO readings of a handwritten date: the model's ISO value, the entry with
     '.', '/' or '|' as separators, every single '1' / '|' / '/' swap
     ('11/10/26' may be '1|10|26'), and the readings where a bar next to a '1'
     is part of the digit ('1|10|26' -> 01.10.2026 or 11.10.2026); invalid and
-    future dates are dropped.
+    future dates are dropped. A typed date (handwritten False) has only its
+    literal reading.
     """
     today = today or date.today()
     found: List[str] = []
@@ -321,10 +400,17 @@ def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional
         if value <= today + timedelta(days=31) and value.isoformat() not in found:
             found.append(value.isoformat())
 
+    text = entry.replace(" ", "")
     iso = re.match(r"(\d{4})-(\d{2})-(\d{2})$", (model_iso or "")[:10])
+    if not handwritten:
+        literal = _DATE_PARTS_RE.search(text)
+        if literal:
+            add(int(literal.group(1)), int(literal.group(3)), _expand_year(literal.group(5)))
+        elif iso:  # a typed date in words ('7. August 2026'): the reader's ISO value
+            add(int(iso.group(3)), int(iso.group(2)), int(iso.group(1)))
+        return found
     if iso:
         add(int(iso.group(3)), int(iso.group(2)), int(iso.group(1)))
-    text = entry.replace(" ", "")
     # '1', '|' and '/' are confused in handwriting: every single swap is a reading (repeated separators collapse)
     def swappable(i: int, ch: str) -> bool:
         if ch == "|":
@@ -415,54 +501,142 @@ class FieldReader:
                          height=image.height)
         request = LLMRequest(prompt=PROMPT.format(label=fld.label, hint=TYPE_HINTS.get(fld.kind, "")),
                              label=f"Fieldread p{fld.page} {fld.label[:30]}", model=self.settings.models.vision,
-                             images=[part], schema=SCHEMA, schema_name="form_field", max_tokens=160)
+                             images=[part], schema=SCHEMA, schema_name="form_field", max_tokens=170)
         answer = self.backend.generate_json(request)
         entry = str((answer or {}).get("entry") or "").strip() if isinstance(answer, dict) else ""
         iso = (answer or {}).get("iso") if isinstance(answer, dict) else None
+        script = str((answer or {}).get("script") or "").lower() if isinstance(answer, dict) else ""
+        fld.script = script if script in SCRIPTS else fld.script if fld.found == FOUND_LOCATOR else None
         fld.entry = entry or EMPTY
         if fld.empty and fld.inside:
-            fld.entry = None  # the layout shows something after the label: an EMPTY answer is no reading
+            fld.entry, fld.script = None, None  # the layout shows something after the label: an EMPTY answer is no reading
             return fld
         if fld.empty:
+            fld.script = BLANK
             return fld
-        if fld.kind in (DATE, PLACE_DATE):
-            extra = [c for c in (answer.get("candidates") or []) if isinstance(c, str)] if isinstance(answer, dict) else []
-            fld.candidates = date_candidates(entry, iso if isinstance(iso, str) else None)
-            for value in extra:  # the reader's own alternative readings (ISO), validated like the others
-                iso_match = re.match(r"(\d{4})-(\d{2})-(\d{2})$", value)
-                for reading in date_candidates(f"{iso_match.group(3)}.{iso_match.group(2)}.{iso_match.group(1)}") if iso_match else []:
-                    if reading not in fld.candidates:
-                        fld.candidates.append(reading)
-            fld.value = fld.candidates[0] if len(fld.candidates) == 1 else (iso if isinstance(iso, str) else None)
-        else:
-            fld.value = entry
+        if fld.script == BLANK:
+            fld.script = None  # an entry was read: 'empty' contradicts it
+        normalise(fld, entry, iso if isinstance(iso, str) else None,
+                  [c for c in (answer.get("candidates") or []) if isinstance(c, str)] if isinstance(answer, dict) else [])
         return fld
 
-    def run(self, pdf_path: Path, pages: Sequence[PageText], handwriting: bool = False) -> List[FormField]:
+    def locate(self, pdf_path: Path, page: PageText) -> Optional[List[FormField]]:
         """
-        Reads the labelled fields of the form-like pages.
+        Form-first reading (handwriting level 'entries'): the vision model
+        lists the label / entry pairs of the page with their boxes and how
+        each entry is written. The lexicon only refines the kind and gives the
+        schema target of a known label. None if the call failed or found
+        nothing (the caller falls back to the lexicon labels).
+        """
+        from fluxsense.llm.images import page_images
+        llm = self.settings.llm
+        limit = min(MAX_FIELDS, self.settings.pipeline.fieldread_max_fields)
+        images = page_images(pdf_path, [page.page], [f"PAGE {page.page}"], llm.max_image_px, llm.image_format,
+                             dpi=llm.render_dpi)
+        answer = self.backend.generate_json(LLMRequest(
+            prompt=LOCATE_PROMPT.format(limit=limit), label=f"Fieldread locate p{page.page}", model=self.settings.models.vision,
+            images=images, schema=LOCATE_SCHEMA, schema_name="form_locate", max_tokens=90 * limit + 60))
+        entries = answer.get("fields") if isinstance(answer, dict) else None
+        if not isinstance(entries, list):
+            return None
+        width, height = page.width or 595.0, page.height or 842.0
+        fields: List[FormField] = []
+        for entry in entries[:limit]:
+            if not isinstance(entry, dict) or not str(entry.get("label") or "").strip():
+                continue
+            region = _points(entry.get("entry_box"), width, height)
+            if region is None:
+                continue
+            label = normalize_checkbox(" ".join(str(entry["label"]).split()))
+            ticked = entry.get("ticked") if isinstance(entry.get("ticked"), bool) else None
+            box_match = _CHECKBOX_RE.match(label)
+            if box_match:
+                ticked = box_match.group(1) in TICKED if ticked is None else ticked
+                label = label[box_match.end():].strip()
+            rule = classify_label(label)
+            kind = rule.kind if rule else (str(entry.get("kind")) if entry.get("kind") in KINDS else TEXT)
+            script = str(entry.get("script") or "").lower()
+            x0, y0, x1, y1 = region
+            pad = max(3.0, 0.25 * (y1 - y0))
+            fld = FormField(page.page, label, kind, rule.target if rule else None,
+                            _points(entry.get("label_box"), width, height) or region,
+                            region=(max(0.0, x0 - 6), max(0.0, y0 - pad), min(width, x1 + 6), min(height, y1 + pad)),
+                            ticked=ticked, script=script if script in SCRIPTS else None, found=FOUND_LOCATOR)
+            fields.append(fld)
+        return fields or None
+
+    def _located_jobs(self, pdf_path: Path, located: List[FormField], dpi: int, overview: Image.Image, width: float,
+                      height: float) -> Tuple[List[FormField], List[Tuple[FormField, int]]]:
+        """Settled fields (checkboxes, entries the locator and the page show empty) and crop jobs of located fields."""
+        settled: List[FormField] = []
+        jobs: List[Tuple[FormField, int]] = []
+        for fld in located:
+            if fld.kind == CHECKBOX and not (fld.target and fld.target.startswith("event.")):
+                if fld.ticked is not None:
+                    fld.entry = fld.value = "[x]" if fld.ticked else "[ ]"
+                    settled.append(fld)
+                continue
+            if fld.ticked is None and fld.target and fld.target.startswith("event."):
+                fld.ticked = self.checkbox_state(pdf_path, fld, dpi)
+            if fld.ticked is False:
+                continue  # an unticked option: its field is not filled
+            if fld.script == BLANK and stroke_share(overview, width, height, fld.region) < 0.003:
+                fld.entry = EMPTY
+                settled.append(fld)
+                continue
+            jobs.append((fld, dpi))
+        return settled, jobs
+
+    def run(self, pdf_path: Path, pages: Sequence[PageText], levels: Optional[Mapping[int, str]] = None) -> List[FormField]:
+        """
+        Reads the form fields of the pages, routed by their handwriting level
+        (field contract §12): AcroForm widgets are read directly; 'signature'
+        reads only date / signature lines; 'entries' locates the label / entry
+        pairs with the vision model (lexicon labels as fallback); 'full' is
+        left to the line-tiled reading (extract/handread); 'none' or an
+        unknown level uses the lexicon trigger (at least MIN_LABELS labels, or
+        date / signature lines with ink).
 
         Args:
             pdf_path: PDF file.
             pages: Pages of the logical document (with layout items or word boxes).
-            handwriting: The visual audit reported handwriting.
+            levels: Page -> handwriting level (none | signature | entries | full); default: the pages' own level.
 
         Returns:
-            The read fields (empty when no page is form-like).
+            The read fields in page order (empty when no page has form fields).
         """
         from fluxsense.extract.ovis import NATIVE_MAX_DPI, native_dpi
+        from fluxsense.llm.images import render_page
+        from fluxsense.stages.signatures import ENTRIES, FULL, SIGNATURE
+        done: List[FormField] = acroform_fields(pdf_path, pages)
+        widget_pages = {f.page for f in done}
         jobs: List[Tuple[FormField, int]] = []
         for page in pages:
+            level = (levels or {}).get(page.page) or page.handwriting
+            if page.page in widget_pages or level == FULL:
+                continue  # digital form values are read from their widgets; a handwritten page is read as line tiles
             labels = find_labels(page)
-            if not form_like(page, labels, handwriting):
+            hand = level == ENTRIES
+            if level != ENTRIES and not form_like(page, labels, False):
                 continue
-            date_only = len(labels) < MIN_LABELS and not handwriting
-            if date_only:
-                labels = [label for label in labels if label.kind in (DATE, PLACE_DATE)]  # date / signature lines only
+            if level == ENTRIES and not page.scanned():
+                continue  # a digital page prints its entries as text
             dpi = min(NATIVE_MAX_DPI, max(300, native_dpi(pdf_path, page.page - 1) or 300))
-            from fluxsense.llm.images import render_page
             overview = render_page(pdf_path, page.page - 1, dpi=100)
             width, height = page.width or 595.0, page.height or 842.0
+            if level == ENTRIES:
+                located = self.locate(pdf_path, page)
+                if located:
+                    settled, located_jobs = self._located_jobs(pdf_path, located, dpi, overview, width, height)
+                    done += settled
+                    jobs += located_jobs
+                    continue
+                if not labels:
+                    continue
+            # a page with only a signature reads its date / signature lines alone (never the printed values)
+            date_only = level == SIGNATURE or (len(labels) < MIN_LABELS and not hand)
+            if date_only:
+                labels = [label for label in labels if label.kind in (DATE, PLACE_DATE)]  # date / signature lines only
             for fld in labels[:self.settings.pipeline.fieldread_max_fields]:
                 if fld.ticked is None and fld.target and fld.target.startswith("event."):
                     fld.ticked = self.checkbox_state(pdf_path, fld, dpi)
@@ -484,13 +658,139 @@ class FieldReader:
                     inline = ink_share(overview, width, height, (band[0] + 2, band[1], band[2], band[3])) > 0.003
                 fld.region = entry_region(fld, width, height, below, inline, labels)
                 jobs.append((fld, dpi))
-        if not jobs:
-            return []
-        workers = max(1, self.settings.llm.max_concurrency)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            done = list(pool.map(lambda job: self.read(pdf_path, job[0], job[1]), jobs))
-        logger.info(f"fieldread: {len(done)} fields read on pages {sorted({f.page for f in done})}")
-        return done
+        if jobs:
+            workers = max(1, self.settings.llm.max_concurrency)
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                done += list(pool.map(lambda job: self.read(pdf_path, job[0], job[1]), jobs))
+        if done:
+            logger.info(f"fieldread: {len(done)} fields read on pages {sorted({f.page for f in done})}")
+        return sorted(done, key=lambda f: (f.page, round(f.bbox[1]), f.bbox[0]))
+
+
+def normalise(fld: FormField, entry: str, iso: Optional[str], extra: Sequence[str] = ()) -> None:
+    """
+    Sets value / candidates of a read entry: dates as ISO with their
+    candidate readings (a typed date has its literal reading only), other
+    kinds verbatim.
+    """
+    if fld.kind not in (DATE, PLACE_DATE):
+        fld.value = entry
+        return
+    handwritten = fld.handwritten
+    fld.candidates = date_candidates(entry, iso, handwritten=handwritten)
+    for value in extra if handwritten else ():  # the reader's own alternative readings (ISO), validated like the others
+        iso_match = re.match(r"(\d{4})-(\d{2})-(\d{2})$", value)
+        for reading in date_candidates(f"{iso_match.group(3)}.{iso_match.group(2)}.{iso_match.group(1)}") if iso_match else []:
+            if reading not in fld.candidates:
+                fld.candidates.append(reading)
+    fld.value = fld.candidates[0] if len(fld.candidates) == 1 else iso
+
+
+def _points(box: Any, width: float, height: float) -> Optional[Box]:
+    """A 0-1000 box [x0, y0, x1, y1] in page points (None if it is no valid box)."""
+    if not isinstance(box, (list, tuple)) or len(box) != 4 or not all(isinstance(v, (int, float)) for v in box):
+        return None
+    x0, y0, x1, y1 = (max(0.0, min(1000.0, float(v))) for v in box)
+    if x1 - x0 < 2 or y1 - y0 < 2:
+        return None
+    return (x0 / 1000 * width, y0 / 1000 * height, x1 / 1000 * width, y1 / 1000 * height)
+
+
+def _widget_label(widget_box: Box, lines: Sequence[Tuple[str, Box]], checkbox: bool) -> Optional[Tuple[str, Box]]:
+    """The printed label of a widget: the nearest line left of it on its row (right of it for a checkbox), else above it."""
+    x0, y0, x1, y1 = widget_box
+    mid, h = (y0 + y1) / 2, max(6.0, y1 - y0)
+    same_row = [(text, box) for text, box in lines if abs((box[1] + box[3]) / 2 - mid) < max(6.0, 0.6 * h)]
+    if checkbox:
+        right = [(text, box) for text, box in same_row if box[0] >= x1 - 2 and box[0] - x1 < 60]
+        if right:
+            return min(right, key=lambda tb: tb[1][0])
+    left = [(text, box) for text, box in same_row if box[2] <= x0 + 2 and x0 - box[2] < 200]
+    if left:
+        return max(left, key=lambda tb: tb[1][2])
+    above = [(text, box) for text, box in lines if box[3] <= y0 + 1 and y0 - box[3] < 16 and box[0] < x1 and box[2] > x0]
+    return max(above, key=lambda tb: tb[1][3]) if above else None
+
+
+def _label_lines(page: PageText, widgets: Sequence[Box]) -> List[Tuple[str, Box]]:
+    """The printed text lines of a form page without the widget appearances (their values and check glyphs)."""
+    if not page.words:
+        return page_lines(page)
+    from fluxsense.layout.din5008 import group_lines
+
+    def in_widget(word: Any) -> bool:
+        cx, cy = (word.x0 + word.x1) / 2, (word.y0 + word.y1) / 2
+        return any(b[0] - 1 <= cx <= b[2] + 1 and b[1] - 1 <= cy <= b[3] + 1 for b in widgets)
+    words = [w for w in page.words if not in_widget(w)]
+    return [(line.text, (line.x0, line.y0, line.x1, line.y1)) for line in group_lines(words)] if words else []
+
+
+def acroform_fields(pdf_path: Path, pages: Sequence[PageText]) -> List[FormField]:
+    """
+    Native AcroForm fields of a digital PDF: the widget values are the
+    entries (no vision); the label is the printed text next to the widget,
+    else the widget's own label or name. Checkboxes give ticked / unticked,
+    signature widgets are skipped.
+    """
+    import pymupdf
+    out: List[FormField] = []
+    try:
+        with PYMUPDF_LOCK, pymupdf.open(pdf_path) as doc:
+            if not doc.is_form_pdf:
+                return []
+            for page in pages:
+                pdf_page = doc.load_page(page.page - 1)
+                origin = (pdf_page.rect.x0, pdf_page.rect.y0)
+                widgets = list(pdf_page.widgets() or [])
+                lines = _label_lines(page, [(w.rect.x0 - origin[0], w.rect.y0 - origin[1], w.rect.x1 - origin[0],
+                                             w.rect.y1 - origin[1]) for w in widgets]) if widgets else []
+                for widget in widgets:
+                    kind_code = widget.field_type
+                    if kind_code in (pymupdf.PDF_WIDGET_TYPE_SIGNATURE, pymupdf.PDF_WIDGET_TYPE_BUTTON):
+                        continue
+                    rect = widget.rect
+                    box = (rect.x0 - origin[0], rect.y0 - origin[1], rect.x1 - origin[0], rect.y1 - origin[1])
+                    checkbox = kind_code in (pymupdf.PDF_WIDGET_TYPE_CHECKBOX, pymupdf.PDF_WIDGET_TYPE_RADIOBUTTON)
+                    printed = _widget_label(box, lines, checkbox)
+                    label = " ".join((printed[0] if printed else widget.field_label or widget.field_name or "").split())
+                    if not label:
+                        continue
+                    rule = classify_label(label)
+                    raw = widget.field_value
+                    fld = FormField(page.page, label, CHECKBOX if checkbox else rule.kind if rule else TEXT,
+                                    rule.target if rule else None, printed[1] if printed else box, region=box,
+                                    script=TYPED, found=FOUND_ACROFORM)
+                    if checkbox:
+                        fld.ticked = raw not in (None, "", False, "Off", "off", "No")
+                        fld.entry = fld.value = "[x]" if fld.ticked else "[ ]"
+                    else:
+                        entry = " ".join(str(raw or "").split())
+                        fld.entry = entry or EMPTY
+                        if entry:
+                            normalise(fld, entry, None)
+                        else:
+                            fld.script = BLANK
+                    out.append(fld)
+    except (RuntimeError, ValueError) as e:  # an unreadable form structure: no widget values
+        logger.warning(f"AcroForm fields not readable: {e}")
+        return []
+    if out:
+        logger.info(f"fieldread: {len(out)} AcroForm fields read on pages {sorted({f.page for f in out})}")
+    return out
+
+
+def field_out(fld: FormField, width: float, height: float) -> Any:
+    """The output record of a form field (boxes normalised to 0-1000)."""
+    from fluxsense.models.result import FormFieldOut
+
+    def norm(box: Box) -> Optional[List[float]]:
+        if not any(box):
+            return None
+        return [round(box[0] / width * 1000, 1), round(box[1] / height * 1000, 1), round(box[2] / width * 1000, 1),
+                round(box[3] / height * 1000, 1)]
+    return FormFieldOut(page=fld.page, label=fld.label, kind=fld.kind, target=fld.target, entry=fld.entry, value=fld.value,
+                        candidates=list(fld.candidates), script=fld.script, found=fld.found, ticked=fld.ticked,
+                        bbox=norm(fld.bbox), entry_bbox=norm(fld.region))
 
 
 def apply_fields(pages: Sequence[PageText], fields: Sequence[FormField]) -> None:
@@ -506,8 +806,9 @@ def form_fields_block(page: PageText) -> str:
     text = page.sources.get(SOURCE_FIELDREAD, "")
     if not text.strip():
         return ""
-    return ("FORM FIELDS (each entry was read from a crop of its printed label; authoritative for these fields, "
-            "'(empty)' means nothing is written there):\n" + text + "\n")
+    return ("FORM FIELDS (each entry was read from a crop of its printed label; authoritative for these fields - map "
+            "these label/value pairs first; [typed] / [handwritten] say how the entry is written, [form field] is the "
+            "value of a digital form field; '(empty)' means nothing is written there):\n" + text + "\n")
 
 
 _ADDRESS_RE = re.compile(r"^\s*(?P<street>.+?)\s+(?P<number>\d+\s?[a-zA-Z]?)\s*,\s*(?P<zip>\d{5})\s+(?P<city>.+?)\s*$")

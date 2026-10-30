@@ -21,7 +21,10 @@ Description:    Field contract §0.5: provenance and auto-acceptance of every
                 boxes place the DIN 5008 regions: an address block under a
                 title line ('Herrn', 'Frau'), a return-address line, the
                 legal footer and the closing block. Non-core fields
-                (addresses, phones, line details) are informational.
+                (addresses, phones, line details) are informational. Form
+                field readings (§12): a handwritten single reading is never
+                accepted, a typed one is when the page text agrees; values of
+                a freely handwritten page need two agreeing readings.
 ------------------------------------------------------------------------------
 """
 
@@ -79,20 +82,35 @@ CLOSING_RE = re.compile(r"(mit freundlichen grüßen|mit freundlichen gruessen|f
                         r"kind regards|best regards)", re.IGNORECASE)
 
 
-def fieldread_values(layer: TextLayer, pages: Sequence[int]) -> Set[str]:
-    """Entries and ISO dates of the FORM FIELDS readings ('label: entry -> iso') of the pages."""
-    values: Set[str] = set()
+TYPED_READING, FORM_READING, HANDWRITTEN_READING = "typed", "form", "handwritten"
+
+
+def fieldread_readings(layer: TextLayer, pages: Sequence[int]) -> Dict[str, Set[str]]:
+    """
+    Entries and ISO dates of the FORM FIELDS readings ('label: entry -> iso')
+    of the pages by how the entry is written: 'typed' ([typed] lines), 'form'
+    ([form field]: a digital AcroForm value) and 'handwritten' ([handwritten]
+    and readings whose script was not reported).
+    """
+    values: Dict[str, Set[str]] = {TYPED_READING: set(), FORM_READING: set(), HANDWRITTEN_READING: set()}
     for number in pages:
         page = layer.page(number)
         for line in ((page.sources.get("fieldread") or "") if page else "").splitlines():
             entry = line.split(": ", 1)[1] if ": " in line else ""
             if not entry or entry.startswith("("):
                 continue
+            kind = TYPED_READING if line.startswith("[typed] ") else FORM_READING if line.startswith("[form field] ") \
+                else HANDWRITTEN_READING
             entry = re.sub(r"\s*\(readings: .*\)$", "", entry)
             for part in entry.split(" -> "):
-                values.add(part.strip())
-            values |= {p.strip() for p in re.split(r"[;\n]", entry) if p.strip()}
+                values[kind].add(part.strip())
+            values[kind] |= {p.strip() for p in re.split(r"[;\n]", entry) if p.strip()}
     return values
+
+
+def fieldread_values(layer: TextLayer, pages: Sequence[int]) -> Set[str]:
+    """Entries and ISO dates of all FORM FIELDS readings of the pages."""
+    return set().union(*fieldread_readings(layer, pages).values())
 
 
 def party_name_text(party: Any) -> str:
@@ -293,8 +311,11 @@ class Assessor:
         self.page_lines = {p: layer.page(p).best_text().splitlines() for p in pages if layer.page(p)}
         self.first_lines = self.page_lines.get(pages[0], []) if pages else []
         self.lines = [line for p in pages for line in self.page_lines.get(p, [])]
-        self.fieldread = fieldread_values(layer, pages)
+        self.readings = fieldread_readings(layer, pages)
+        self.fieldread = set().union(*self.readings.values())
         self._independent: Optional[Dict[int, Any]] = None
+        self._ocr: Optional[Dict[int, Any]] = None
+        self._agreed: Optional[Dict[int, Any]] = None
         self.text = "\n".join(self.lines)
         self.text_norm = normalize_text(self.text)
         self.checks = [c for c in checks if c.status == CheckStatus.FAIL and c.field]
@@ -506,10 +527,41 @@ class Assessor:
         """True if the value is a form-field reading of its printed label (§12)."""
         if ev.matched_source == "fieldread":
             return True
+        return self._reading_in(ev, self.fieldread)
+
+    @staticmethod
+    def _reading_in(ev: FieldEvidence, values: Set[str]) -> bool:
+        """True if the value is one of the readings (dates compared as dates)."""
         if ev.kind == "date":
             parsed = parse_date(ev.value)
-            return parsed is not None and parsed.isoformat() in self.fieldread
-        return bool(ev.value) and compact(str(ev.value)) in {compact(v) for v in self.fieldread}
+            return parsed is not None and parsed.isoformat() in values
+        return bool(ev.value) and compact(str(ev.value)) in {compact(v) for v in values}
+
+    def _reading_kind(self, ev: FieldEvidence) -> str:
+        """How the reading of a value was written; any handwritten reading of the same value counts as handwriting."""
+        if self._reading_in(ev, self.readings[HANDWRITTEN_READING]):
+            return HANDWRITTEN_READING
+        if self._reading_in(ev, self.readings[FORM_READING]):
+            return FORM_READING
+        if self._reading_in(ev, self.readings[TYPED_READING]):
+            return TYPED_READING
+        return HANDWRITTEN_READING
+
+    def _index(self, select: Any) -> Dict[int, Any]:
+        """Grounding index over the document's pages with the text sources select(page) returns."""
+        from fluxsense.extract.base import PageText
+        pages = []
+        for number in self.pages:
+            page = self.layer.page(number)
+            if page is not None:
+                pages.append(PageText(page=number, width=page.width, height=page.height, sources=select(page)))
+        return build_index(TextLayer(pages=pages, engine="independent"), self.pages)
+
+    def _in_ocr_text(self, ev: FieldEvidence) -> bool:
+        """The value stands in the page text itself (printed or OCR, without the field and handwriting readings)."""
+        if self._ocr is None:
+            self._ocr = self._index(lambda page: {k: v for k, v in page.sources.items() if k not in ("fieldread", "handread")})
+        return ground_value(ev.kind, ev.value, self._ocr).status == GroundingStatus.GROUNDED
 
     def _single_reading(self, ev: FieldEvidence) -> bool:
         """
@@ -517,20 +569,42 @@ class Assessor:
         same value printed in the page's digital text layer. OCR-derived text
         (a scanner's invisible OCR layer, OvisOCR3, Docling, ocrmypdf) is no
         independent confirmation of handwriting, and the full-page extraction
-        saw the FORM FIELDS block.
+        saw the FORM FIELDS block. A typed entry (as the field reader saw it)
+        that the page text (also OCR) prints the same way, and a digital
+        AcroForm value, are no single reading.
         """
         if not self.fieldread or not self._field_reading(ev):
             return False
+        kind = self._reading_kind(ev)
+        if kind == FORM_READING:
+            return False  # a digital form field value is no reading at all
+        if kind == TYPED_READING and self._in_ocr_text(ev):
+            return False  # a typed entry that the page text prints the same way: two independent readings agree
         if self._independent is None:
-            from fluxsense.extract.base import PageText
-            pages = []
-            for number in self.pages:
-                page = self.layer.page(number)
-                if page is not None:  # only printed digital text: OCR-derived sources share the misreading risk
-                    digital = {} if page.native_ocr else {k: v for k, v in page.sources.items() if k == "native"}
-                    pages.append(PageText(page=number, width=page.width, height=page.height, sources=digital))
-            self._independent = build_index(TextLayer(pages=pages, engine="independent"), self.pages)
+            # only printed digital text: OCR-derived sources share the misreading risk of handwriting
+            self._independent = self._index(lambda page: {} if page.native_ocr else
+                                            {k: v for k, v in page.sources.items() if k == "native"})
         return ground_value(ev.kind, ev.value, self._independent).status != GroundingStatus.GROUNDED
+
+    def _unconfirmed_handwriting(self, ev: FieldEvidence) -> bool:
+        """
+        §12 'full' pages: a value of a freely handwritten page is accepted only
+        when it stands in a line both independent readings agree on (or in
+        printed digital text).
+        """
+        number = ev.matched_page or ev.page or (self.pages[0] if len(self.pages) == 1 else None)
+        page = self.layer.page(number) if number else None
+        if page is None or page.handwriting != "full":
+            return False
+        if self._agreed is None:
+            from fluxsense.extract.handread import agreed_text
+
+            def select(source: Any) -> Dict[str, str]:
+                agreed = {"handread": agreed_text(source)} if source.handwriting == "full" else {}
+                digital = {} if source.native_ocr else {k: v for k, v in source.sources.items() if k == "native"}
+                return {**agreed, **digital}
+            self._agreed = self._index(select)
+        return ground_value(ev.kind, ev.value, self._agreed).status != GroundingStatus.GROUNDED
 
     def _labelled_gross(self, value: Any) -> bool:
         """The amount due equals the grand total, and that total is confirmed or printed next to a total label."""
@@ -652,6 +726,8 @@ class Assessor:
         reasons += self._identifier_reasons(ev)
         if self._single_reading(ev):
             reasons.append("handwritten form field (single reading)")
+        if self._unconfirmed_handwriting(ev):
+            reasons.append("handwritten page: not in a line two independent readings agree on")
         named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous", "grounding.iban_printed_invalid")
         date_reasons = list(dict.fromkeys(c.message for c in self.checks if c.check_id in named and c.field == ev.path))
         if date_reasons:  # §9 / §12: name the conflicting value, the ambiguous readings or the year decision

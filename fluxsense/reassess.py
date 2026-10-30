@@ -40,6 +40,7 @@ def layer_to_json(layer: TextLayer) -> Dict[str, Any]:
     for p in layer.pages:
         pages.append({
             "page": p.page, "width": p.width, "height": p.height, "sources": p.sources, "native_ocr": p.native_ocr,
+            "handwriting": p.handwriting,
             "words": [[w.x0, w.y0, w.x1, w.y1, w.text, w.cell] for w in p.words],
             "items": [[i.page, list(i.bbox), i.category, i.content, i.source] for i in p.items if isinstance(i, LayoutItem)],
             "tables": [{"rows": t.rows, "source": t.source, "bbox": list(t.bbox) if t.bbox else None} for t in p.tables],
@@ -56,7 +57,8 @@ def layer_from_json(data: Dict[str, Any], pdf: Optional[Path] = None) -> TextLay
     for entry in data.get("pages", []):
         number = entry["page"]
         page = PageText(page=number, width=entry.get("width", 595.0), height=entry.get("height", 842.0),
-                        sources=entry.get("sources") or {}, native_ocr=bool(entry.get("native_ocr")))
+                        sources=entry.get("sources") or {}, native_ocr=bool(entry.get("native_ocr")),
+                        handwriting=entry.get("handwriting"))
         page.words = [Word(*w) for w in entry.get("words") or []]
         page.items = [LayoutItem(i[0], tuple(i[1]), i[2], i[3], i[4]) for i in entry.get("items") or []]  # type: ignore[arg-type]
         page.tables = [PageTable(page=number, rows=t["rows"], source=t["source"], bbox=tuple(t["bbox"]) if t.get("bbox") else None)

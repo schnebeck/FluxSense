@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.6 (2026-10-30). This contract defines what each core field of a
+Version 1.7 (2026-10-30). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -235,6 +235,39 @@ insurance policies carry their payment terms in `legal_body`:
 
 ## 12. Form fields read by their label
 
+### 12.1 Handwriting level and reading strategy
+
+Every scanned page has a handwriting level, reported by the Stage 1.0
+page signature pass (or, for files the pass does not describe, one probe
+call per file; `pipeline.handwriting_probe`). It is part of the output
+(`logical_documents[].handwriting`, page -> level, and
+`classification.page_signatures[].handwriting`) and routes the reading:
+
+| Level | Page | Strategy |
+|---|---|---|
+| `none` | no handwriting | unchanged: the lexicon trigger below |
+| `signature` | only a signature, possibly with place / date next to it | only the date / signature lines are read (date-only mode); a signature alone never triggers the form reading and flags no printed value of the page |
+| `entries` | printed form with handwritten entries | form-first: the vision model locates the label / entry pairs on the page image (`[x0, y0, x1, y1]`, 0-1000) and says how each entry is written; the lexicon only refines the kind and gives the schema target, it is no trigger. Each entry is cropped at native resolution and read alone. If the locator fails, the lexicon labels of the page are read |
+| `full` | freely handwritten page | the OCR text is only a hint: the page is cut into bands of a few text lines (at the empty rows between them), each band is transcribed twice with differently worded prompts at native resolution; see 12.4 |
+| unknown | the level was not reported | the lexicon trigger below |
+
+Native AcroForm fields of digital PDFs are read from their widgets
+(PyMuPDF), without vision: the widget value is the entry, the printed
+text next to the widget (left of it on its row, right of it for a
+checkbox, else above it) is the label; signature widgets are skipped.
+
+Every reading says how its entry is written: `typed` (printed, typewriter,
+computer), `handwritten` or `empty`; an AcroForm value is `[form field]`.
+The FORM FIELDS block marks each line (`[typed] Ort, Datum: ...`,
+`[handwritten] ...`, `[form field] ...`); a reading without a reported
+script counts as handwriting. A typed date has only its literal reading
+(no `1` / `|` swaps). The readings are part of the output
+(`logical_documents[].form_fields[]`: page, label, kind, target, entry,
+value, candidates, script, found = label | locator | acroform, ticked,
+bbox and entry_bbox in 0-1000).
+
+### 12.2 Lexicon trigger and field reading
+
 On scanned pages of forms (no native text layer, at least three printed
 field labels of the lexicon - or only date / signature lines such as
 `..., den`, `Ort, Datum`, `Datum/Unterschrift`, which are then read alone)
@@ -270,13 +303,16 @@ each printed label is read on its own:
   more than one reading flags the field (`fieldread.ambiguous`, naming the
   readings).
 - The readings form a FORM FIELDS block of the page text for the
-  extraction and a `fieldread` text source for grounding; a value equal to
-  a reading has provenance `label`, but a handwritten reading alone is
-  never auto-accepted ("handwritten form field (single reading)"): it needs
-  an independent second reading with the same value printed in the page's
-  digital text layer - OCR-derived text (a scanner's invisible OCR layer,
-  OvisOCR3, Docling, ocrmypdf) and the full-page extraction (it saw the
-  FORM FIELDS block) do not count - and, for dates, a single reading.
+  extraction (to be mapped first) and a `fieldread` text source for
+  grounding; a value equal to a reading has provenance `label`, but a
+  handwritten reading alone is never auto-accepted ("handwritten form
+  field (single reading)"): it needs an independent second reading with
+  the same value printed in the page's digital text layer - OCR-derived
+  text (a scanner's invisible OCR layer, OvisOCR3, Docling, ocrmypdf) and
+  the full-page extraction (it saw the FORM FIELDS block) do not count -
+  and, for dates, a single reading. A `typed` reading that the page text
+  (also OCR) prints the same way is no single reading and may be
+  auto-accepted; an AcroForm value never is a single reading.
 - A page whose embedded text is a scanner's OCR layer (mostly invisible
   text, or a page-covering image in a file from an OCR tool) is a scan: its
   text counts as OCR everywhere (field reading, the printed-IBAN rule of
@@ -299,3 +335,48 @@ each printed label is read on its own:
   replaced by the reading and flagged with both values
   (`fieldread.disagreement`); a full-page value for an empty field is
   flagged.
+
+### 12.3 Signatures
+
+Every logical document lists its signature places
+(`logical_documents[].signatures[]`): `{signer_name, role, place, date,
+page, bbox, status, evidence, signer_source, label, removed_ocr}`.
+
+- A signature place is the space above a short printed signature label
+  (`Unterschrift ...`, `Datum/Unterschrift ...`, or a role word under a
+  line or signature: `Mieter`, `Der Vermieter`), ended by running text or a
+  form label above it; or the gap in a closing block (`Mit freundlichen
+  Grüßen` / organisation / signature / printed name); or a typed `gez.
+  <Name>`. A sentence that mentions `Unterschrift` is no label.
+- `status` is measured as pen ink in that space (printed rules and the
+  dates written next to it do not count): `signed`, `empty` or `unclear`.
+  A bare role word without ink and without a signature rule is no
+  signature place.
+- The signer is derived from printed content only, never by reading the
+  scribble, in this order: an `i. A.` / `i. V.` name (`proxy`), the printed
+  name under the signature or in the closing (`printed_name`), the party
+  named by the line label (`line_label`: issuing roles - landlord,
+  employer, seller, contractor, issuer - are the sender, the counterpart
+  roles - tenant, employee, buyer, client, applicant, policyholder, ... -
+  the recipient; on a §2.4 form the other way round), the filler of a §2.4
+  form (`form_filler`). Without evidence, and for an `empty` place,
+  `signer_name` is null - this is no error.
+- Place and date come from the date-only field reading next to the
+  signature (`Ort, Datum`, `<Ort>, den`), else from a printed `<Ort>, den
+  <Datum>` / date line on the signature's rows.
+- On scanned pages the OCR text inside a signed or unclear signature space
+  (except dates and form labels) is removed from the page text, its layout
+  items and word boxes before the extraction (`removed_ocr`), so the
+  scribble can never become a party or a name.
+
+### 12.4 Freely handwritten pages
+
+On a `full` page each band is read twice (two prompts, no OCR text shown).
+Lines both readings agree on (case, spacing and edge punctuation aside)
+and that look like text (no runaway repetition) are accepted; the others
+are kept as `[?] reading A | reading B`. The result is the `handread` text
+source and a HANDWRITTEN TEXT block of the extraction prompt (the OCR text
+follows as a hint). A value of such a page is auto-accepted only when it
+stands in an agreed line (or in printed digital text) and passes the other
+rules ("handwritten page: not in a line two independent readings agree
+on").

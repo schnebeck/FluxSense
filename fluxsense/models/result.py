@@ -186,6 +186,41 @@ class ZugferdComparison(BaseModel):
     differences: List[Dict[str, Any]] = Field(default_factory=list)
 
 
+class FormFieldOut(BaseModel):
+    """One form field read by its label (field contract §12)."""
+
+    page: int
+    label: str = Field(..., description="Printed label of the field")
+    kind: str = Field("text", description="date | place_date | name | persons | address | location | phone | text | checkbox")
+    target: Optional[str] = Field(None, description="Schema target of an unambiguous label (e.g. doc_date, event.MOVE_IN)")
+    entry: Optional[str] = Field(None, description="The entry as read ('EMPTY' for an empty field, None: not read)")
+    value: Optional[str] = Field(None, description="Normalised value (ISO date for date kinds)")
+    candidates: List[str] = Field(default_factory=list, description="All valid date readings (more than one: ambiguous)")
+    script: Optional[str] = Field(None, description="typed | handwritten | empty as the reader saw it (None: not reported)")
+    found: str = Field("label", description="label (lexicon label in the layout) | locator (vision form locator) | "
+                                            "acroform (digital form widget, no vision)")
+    ticked: Optional[bool] = Field(None, description="Checkbox state (None: no checkbox / unknown)")
+    bbox: Optional[List[float]] = Field(None, description="Label box [x0,y0,x1,y1], 0-1000 normalized")
+    entry_bbox: Optional[List[float]] = Field(None, description="Entry region [x0,y0,x1,y1], 0-1000 normalized")
+
+
+class SignatureOut(BaseModel):
+    """One signature place of a logical document; the signer comes from printed content only, never from the scribble."""
+
+    signer_name: Optional[str] = Field(None, description="Signer derived from printed content (None: no evidence)")
+    role: Optional[str] = Field(None, description="Role of the signer: the role named by the line label (landlord, tenant, "
+                                                  "employer, applicant, ...), sender (letter closing) or form_filler")
+    place: Optional[str] = Field(None, description="Place written / printed next to the signature")
+    date: Optional[str] = Field(None, description="Date next to the signature (ISO)")
+    page: int
+    bbox: Optional[List[float]] = Field(None, description="Signature region [x0,y0,x1,y1], 0-1000 normalized")
+    status: str = Field("unclear", description="signed | empty | unclear")
+    evidence: Optional[str] = Field(None, description="Printed text the signature place and its signer were derived from")
+    signer_source: Optional[str] = Field(None, description="printed_name | proxy (i. A. / i. V.) | line_label | form_filler")
+    label: Optional[str] = Field(None, description="Printed label of the signature line, or the closing")
+    removed_ocr: List[str] = Field(default_factory=list, description="OCR text of the scribble removed from the page text")
+
+
 class LogicalDocument(BaseModel):
     """One logical document found in the PDF (possibly one of a stack)."""
 
@@ -207,6 +242,10 @@ class LogicalDocument(BaseModel):
     trust: TrustReport = Field(default_factory=TrustReport)
     zugferd_comparison: Optional[ZugferdComparison] = None
     pointer_stats: Optional[Dict[str, int]] = Field(None, description="Pointer extraction (experiment): pointed/resolved/changed")
+    handwriting: Dict[int, str] = Field(default_factory=dict, description="Page -> handwriting level none | signature | "
+                                                                          "entries | full (pages with a known level)")
+    form_fields: List[FormFieldOut] = Field(default_factory=list, description="Form fields read by their label (§12)")
+    signatures: List[SignatureOut] = Field(default_factory=list, description="Signature places and their signers")
     errors: List[str] = Field(default_factory=list)
 
 

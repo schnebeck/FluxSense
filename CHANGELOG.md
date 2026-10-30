@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Field contract 1.7, §12: every scanned page has a handwriting level
+  (`none | signature | entries | full`) from the Stage 1.0 page signatures
+  or a probe call (`pipeline.handwriting_probe`), output per document
+  (`handwriting`). A page with only a signature reads just its date /
+  signature lines and flags no printed value; a printed form with
+  handwritten entries is read form-first (the vision model locates the
+  label / entry pairs, the lexicon only gives kind and target); a freely
+  handwritten page is read twice from native-resolution line bands and
+  only agreeing lines are accepted (`handread` source). The field reader
+  reports `typed | handwritten | empty`: typed entries that the page text
+  agrees with may be auto-accepted again. Native AcroForm fields of
+  digital PDFs are read from their widgets without vision. The readings
+  are output as `form_fields[]`.
+- Signatures as structured output (`signatures[]`: signer, role, place,
+  date, page, bbox, status `signed | empty | unclear`, evidence): the
+  status comes from the pen ink in the signature space, the signer only
+  from printed content (i. A. / i. V. name, printed name, line label ->
+  party, §2.4 form filler; else null). OCR text of signature scribbles is
+  removed from scanned pages before the extraction (`pipeline.signatures`).
 - An IBAN printed with a wrong checksum is kept as printed and flagged
   (bank-code status, one-digit correction hints) instead of being removed;
   a one-time hint names `fluxsense blz-update` when no bank-code list is

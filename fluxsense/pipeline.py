@@ -24,7 +24,7 @@ from datetime import date
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pydantic import ValidationError
 
@@ -33,7 +33,8 @@ from fluxsense.catalog import Catalog, default_catalog
 from fluxsense.catalog.contract import contract_for, form_filler, geometry_policy, subject_context
 from fluxsense.catalog.registry import load_custom_types
 from fluxsense.config import Settings
-from fluxsense.extract.fieldread import FieldReader, apply_fields, map_fields
+from fluxsense.extract.fieldread import FieldReader, apply_fields, field_out, map_fields
+from fluxsense.extract.handread import HandReader
 from fluxsense.extract import build_text_layer
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.acceptance import assess
@@ -54,6 +55,8 @@ from fluxsense.stages import zugferd
 from fluxsense.stages.classify import ClassificationResult, Classifier, Entity
 from fluxsense.stages.correction import TargetedCorrector
 from fluxsense.stages.extract import Extractor
+from fluxsense.stages import signers
+from fluxsense.stages.signatures import probe_handwriting
 from fluxsense.stages.identity import (apply_form_semantics, unfilled_form, direction_from_parties, harmonize_parties,
                                       remove_role_labels)
 from fluxsense.stages.repair import (clean_document_numbers, drop_signature_parties, complete_statement_years, drop_bank_statement_due_date,
@@ -351,6 +354,11 @@ class Analyzer:
             result.classification = {"source": "AI", "strategy": classification.strategy, "language": classification.language,
                                      "raw": classification.raw, "validation_errors": classification.errors,
                                      "page_signatures": classification.signatures, "signature_starts": classification.starts}
+            for sig in classification.signatures:
+                page = layer.page(int(sig.get("page") or 0))
+                if page is not None and sig.get("handwriting"):
+                    page.handwriting = str(sig["handwriting"])
+        self._probe_handwriting(prepared, {int(s.get("page") or 0) for s in result.classification.get("page_signatures") or []})
         timings["classification"] = round(time.monotonic() - t0, 3)
 
         for index, entity in enumerate(entities):
@@ -365,6 +373,32 @@ class Analyzer:
         if hasattr(self.backend, "fingerprints"):
             result.engines["llm_fingerprints"] = dict(getattr(self.backend, "fingerprints"))
         return result
+
+    def _probe_handwriting(self, prepared: Prepared, described: Set[int]) -> None:
+        """Handwriting level of the scanned pages the signature pass did not describe (one probe call per file)."""
+        cfg = self.settings.pipeline
+        if not (cfg.fieldread and cfg.handwriting_probe):
+            return
+        pages = [p.page for p in prepared.layer.pages if p.page not in described and p.handwriting is None and p.scanned()]
+        if not pages:
+            return
+        for number, level in probe_handwriting(self.backend, self.settings, prepared.path, pages).items():
+            page = prepared.layer.page(number)
+            if page is not None:
+                page.handwriting = level
+
+    def _signature_blocks(self, prepared: Prepared, pages: List[int]) -> List[signers.SignatureBlock]:
+        """Signature places of the document's pages (status from the pen ink); scribble OCR is removed from scans."""
+        from fluxsense.llm.images import render_page
+        blocks: List[signers.SignatureBlock] = []
+        for number in pages:
+            page = prepared.layer.page(number)
+            if page is None or not signers.find_blocks(page):
+                continue
+            found = signers.find_blocks(page, render_page(prepared.path, number - 1, dpi=100))
+            signers.scrub_page(page, found)
+            blocks += found
+        return blocks
 
     def _evaluate(self, fields: Dict[str, Any], entity: Entity, specs: List[Any]) -> Any:
         """Runs the deterministic plausibility rules on fields."""
@@ -386,13 +420,20 @@ class Analyzer:
         if xml and not self.settings.pipeline.zugferd_visual_audit:
             audit = False
         form_fields: List[Any] = []
+        form_pages = [layer.page(p) for p in pages if layer.page(p) is not None]
+        doc.handwriting = {page.page: page.handwriting for page in form_pages if page and page.handwriting}  # type: ignore[union-attr]
+        signature_blocks = self._signature_blocks(prepared, pages) if self.settings.pipeline.signatures else []
         if self.settings.pipeline.fieldread:
             t0 = time.monotonic()
-            form_pages = [layer.page(p) for p in pages if layer.page(p) is not None]
             form_fields = FieldReader(self.backend, self.settings).run(prepared.path, form_pages)  # type: ignore[arg-type]
             apply_fields(form_pages, form_fields)  # type: ignore[arg-type]
-            if form_fields:
+            readings = HandReader(self.backend, self.settings).run(prepared.path, form_pages)  # type: ignore[arg-type]
+            if form_fields or readings:
                 timings["fieldread"] = timings.get("fieldread", 0.0) + round(time.monotonic() - t0, 3)
+            doc.form_fields = [field_out(f, layer.page(f.page).width or 595.0, layer.page(f.page).height or 842.0)  # type: ignore[union-attr]
+                               for f in form_fields]
+        for block in signature_blocks:
+            signers.place_and_date(block, layer.page(block.page), form_fields)  # type: ignore[arg-type]
         t0 = time.monotonic()
         outcome = self.extractor.run(prepared.path, layer, pages, entity.type_tags, private_id, business_id,
                                      zugferd_present=bool(xml), audit=audit)
@@ -627,6 +668,9 @@ class Analyzer:
         if signature_notes:
             doc.corrections.append(CorrectionRecord(trigger_checks=["parties"], scope="signature-only parties", applied=True,
                                                     note="; ".join(signature_notes)))
+        if signature_blocks:
+            sizes = {p: (layer.page(p).width or 595.0, layer.page(p).height or 842.0) for p in pages if layer.page(p)}  # type: ignore[union-attr]
+            doc.signatures = signers.attribute(signature_blocks, fields, contract_for(contract_type).party_case, sizes=sizes)
         extra_checks += check_contract_payment(fields)
         # §9: cross-field date consistency (after grounding / zoom / correction: their readings are final here)
         date_checks, date_notes = check_dates_consistency(fields, evidence, date.today(),

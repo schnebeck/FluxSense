@@ -9,9 +9,12 @@ Producer:       thorsten.schnebeck@gmx.net
 Generator:      Claude Opus 5.5
 Description:    Per-page signatures for stack segmentation: one cheap VLM call
                 on page thumbnails (batched) records letterhead/sender, date,
-                'page x of y', salutation, closing/signature, form header and
-                blank pages. Document starts are then decided
-                deterministically and enforced on the classification.
+                'page x of y', salutation, closing/signature, form header,
+                blank pages and the page's handwriting level (none |
+                signature | entries | full, field contract §12). Document
+                starts are then decided deterministically and enforced on the
+                classification. Documents too short for the signature pass
+                get the handwriting level from a probe call of their own.
 ------------------------------------------------------------------------------
 """
 
@@ -55,13 +58,35 @@ For EACH page report what is visible, as printed. Do not guess.
 - addressee: the page carries a recipient address block (address window)
 - boilerplate: the page is general information / terms / AGB / Hinweise / Datenschutz / "Wichtige Informationen"
   without its own date, addressee or salutation
+- handwriting: {handwriting_rule}
 
 Short text start of each page (auxiliary):
 {texts}
 
 Return ONLY JSON: {{"pages": [{{"page": 1, "blank": false, "letterhead": true, "sender": "...", "date": null, "page_number": null,
-"salutation": true, "closing": false, "form": false, "title": null, "addressee": true, "boilerplate": false}}]}}
+"salutation": true, "closing": false, "form": false, "title": null, "addressee": true, "boilerplate": false,
+"handwriting": "none"}}]}}
 """
+
+NONE, SIGNATURE, ENTRIES, FULL = "none", "signature", "entries", "full"
+HANDWRITING_LEVELS: Tuple[str, ...] = (NONE, SIGNATURE, ENTRIES, FULL)
+HANDWRITING_RULE = ('"none" (no handwriting at all), "signature" (only a handwritten signature, possibly with a place '
+                    'and date written next to it), "entries" (a printed form whose fields are filled in by hand), '
+                    '"full" (the page itself is written by hand: a handwritten letter, note or card)')
+
+PROMPT_HANDWRITING = """
+You see pages {first}-{last} of a scanned document. For EACH page report how much of it is handwritten:
+handwriting: {handwriting_rule}.
+Printed or typed text (also typewriter text and stamps) is no handwriting. Do not guess.
+Return ONLY JSON: {{"pages": [{{"page": 1, "handwriting": "none"}}]}}
+"""
+
+HANDWRITING_SCHEMA: Dict[str, Any] = {
+    "type": "object", "additionalProperties": False, "required": ["pages"],
+    "properties": {"pages": {"type": "array", "items": {
+        "type": "object", "additionalProperties": False, "required": ["page", "handwriting"],
+        "properties": {"page": {"type": "integer"}, "handwriting": {"type": "string", "enum": list(HANDWRITING_LEVELS)}}}}},
+}
 
 SIGNATURE_SCHEMA: Dict[str, Any] = {
     "type": "object", "additionalProperties": False, "required": ["pages"],
@@ -72,7 +97,8 @@ SIGNATURE_SCHEMA: Dict[str, Any] = {
             "sender": {"type": ["string", "null"], "maxLength": 40}, "date": {"type": ["string", "null"], "maxLength": 12},
             "page_number": {"type": ["string", "null"], "maxLength": 20}, "salutation": {"type": "boolean"},
             "closing": {"type": "boolean"}, "form": {"type": "boolean"}, "title": {"type": ["string", "null"], "maxLength": 40},
-            "addressee": {"type": "boolean"}, "boilerplate": {"type": "boolean"}}}}},
+            "addressee": {"type": "boolean"}, "boilerplate": {"type": "boolean"},
+            "handwriting": {"type": "string", "enum": list(HANDWRITING_LEVELS)}}}}},
 }
 
 
@@ -92,6 +118,7 @@ class PageSignature:
     title: Optional[str] = None
     addressee: bool = False
     boilerplate: bool = False
+    handwriting: Optional[str] = None  # none | signature | entries | full (None: not reported)
     header: Optional[str] = None  # running page header from the layout (not asked from the model)
     layout_page: Optional[int] = None  # bare printed page number of a layout page-number item ('3')
     toc: bool = False  # the page is a table of contents
@@ -311,9 +338,9 @@ def collect_signatures(backend: LLMBackend, settings: Settings, pdf_path: Path, 
                              settings.llm.image_format, dpi=100)
         texts = "\n".join(f"--- PAGE {p} ---\n{(layer.page(p).best_text() if layer.page(p) else '')[:300]}" for p in batch)
         answer = backend.generate_json(LLMRequest(
-            prompt=PROMPT_SIGNATURES.format(first=batch[0], last=batch[-1], texts=texts), label=f"Stage 1.0 signatures p{batch[0]}-{batch[-1]}",
-            model=settings.models.primary, images=images, schema=SIGNATURE_SCHEMA, schema_name="page_signatures",
-            max_tokens=80 * len(batch) + 100))
+            prompt=PROMPT_SIGNATURES.format(first=batch[0], last=batch[-1], texts=texts, handwriting_rule=HANDWRITING_RULE),
+            label=f"Stage 1.0 signatures p{batch[0]}-{batch[-1]}", model=settings.models.primary, images=images,
+            schema=SIGNATURE_SCHEMA, schema_name="page_signatures", max_tokens=90 * len(batch) + 100))
         got = _parse_signatures(answer, batch)
         missing = [p for p in batch if p not in {s.page for s in got}]
         if missing:
@@ -322,10 +349,11 @@ def collect_signatures(backend: LLMBackend, settings: Settings, pdf_path: Path, 
                                  settings.llm.image_format, dpi=100)
             texts = "\n".join(f"--- PAGE {p} ---\n{(layer.page(p).best_text() if layer.page(p) else '')[:300]}" for p in missing)
             retry = backend.generate_json(LLMRequest(
-                prompt=PROMPT_SIGNATURES.format(first=missing[0], last=missing[-1], texts=texts) +
+                prompt=PROMPT_SIGNATURES.format(first=missing[0], last=missing[-1], texts=texts,
+                                                handwriting_rule=HANDWRITING_RULE) +
                 f"\nDescribe EXACTLY these pages, one entry each: {missing}",
                 label=f"Stage 1.0 signatures retry p{missing[0]}-{missing[-1]}", model=settings.models.primary, images=images,
-                schema=SIGNATURE_SCHEMA, schema_name="page_signatures", max_tokens=80 * len(missing) + 100))
+                schema=SIGNATURE_SCHEMA, schema_name="page_signatures", max_tokens=90 * len(missing) + 100))
             got += _parse_signatures(retry, missing)
         result += got
     return sorted(result, key=lambda s: s.page)
@@ -337,8 +365,40 @@ def _parse_signatures(answer: Any, batch: List[int]) -> List[PageSignature]:
     if isinstance(answer, dict):
         for entry in answer.get("pages") or []:
             if isinstance(entry, dict) and entry.get("page") in batch and entry["page"] not in out:
-                out[entry["page"]] = PageSignature(**{k: entry.get(k) for k in PageSignature.__dataclass_fields__ if k in entry})
+                sig = PageSignature(**{k: entry.get(k) for k in PageSignature.__dataclass_fields__ if k in entry})
+                sig.handwriting = sig.handwriting if sig.handwriting in HANDWRITING_LEVELS else None
+                out[entry["page"]] = sig
     return list(out.values())
+
+
+def probe_handwriting(backend: LLMBackend, settings: Settings, pdf_path: Path, pages: List[int]) -> Dict[int, str]:
+    """
+    Handwriting level of pages the signature pass did not describe (documents
+    below signature_min_pages, ZUGFeRD files): one call per 16 pages on
+    medium-size page images.
+
+    Args:
+        backend: LLM backend.
+        settings: Settings.
+        pdf_path: PDF file.
+        pages: 1-based pages.
+
+    Returns:
+        Page -> level for the pages the model answered (a failed call leaves the level unknown).
+    """
+    levels: Dict[int, str] = {}
+    for start in range(0, len(pages), BATCH_PAGES):
+        batch = pages[start:start + BATCH_PAGES]
+        size = settings.llm.max_image_px if len(batch) <= 2 else settings.llm.classify_image_px
+        images = page_images(pdf_path, batch, [f"PAGE {p}" for p in batch], size, settings.llm.image_format, dpi=100)
+        answer = backend.generate_json(LLMRequest(
+            prompt=PROMPT_HANDWRITING.format(first=batch[0], last=batch[-1], handwriting_rule=HANDWRITING_RULE),
+            label=f"Stage 1.0 handwriting p{batch[0]}-{batch[-1]}", model=settings.models.primary, images=images,
+            schema=HANDWRITING_SCHEMA, schema_name="page_handwriting", max_tokens=20 * len(batch) + 40))
+        for entry in (answer.get("pages") or []) if isinstance(answer, dict) else []:
+            if isinstance(entry, dict) and entry.get("page") in batch and entry.get("handwriting") in HANDWRITING_LEVELS:
+                levels.setdefault(int(entry["page"]), str(entry["handwriting"]))
+    return levels
 
 
 def signatures_prompt(signatures: List[PageSignature], starts: List[int]) -> str:

@@ -129,6 +129,11 @@ class PipelineSettings(BaseModel):
     fieldread: bool = Field(True, description="Form fields of scanned form pages read by their printed label (one crop "
                                               "per field, §12)")
     fieldread_max_fields: int = Field(24, description="Maximum fields read per page")
+    handwriting_probe: bool = Field(True, description="Handwriting level (none | signature | entries | full) of scanned "
+                                                      "pages the Stage 1.0 signature pass did not describe: one call per "
+                                                      "file (routes the form field reading, §12)")
+    signatures: bool = Field(True, description="Signature places with status and printed signer (§12); OCR text of "
+                                               "scribbles is removed from scanned pages")
     pointer_extraction: bool = Field(False, description="EXPERIMENT: numbered text lines on native pages; the model "
                                      "points to the line and the text layer supplies the characters")
 
