@@ -214,12 +214,17 @@ for doc in result.logical_documents:
 6. **Plausibility and one targeted correction** when a sum or balance
    check fails.
 7. **Provenance and acceptance** per field, summarised in a trust report.
+8. **Text levels and corrections** (optional page text): raw, clean
+   (dehyphenated, reflowed) and corrected text; dictionary and fixed-format
+   corrections decided by the image (crop re-reads); a searchable PDF via
+   `fluxsense.text.render_text_layer`.
 
 ## Output
 
 `AnalysisResult` (`fluxsense/models/result.py`):
 
-- `source`, `text_layer` (engine, sources; optional per-page text),
+- `source`, `text_layer` (engine, sources; optional per-page text in the
+  levels raw / clean / corrected with the corrections),
   `classification`, `zugferd`, `status`, `error_code`;
 - `logical_documents[]` with `type`, `type_tags`, `pages`, `direction`,
   `tenant_context`, `fields` (`meta_header`, `bodies` such as

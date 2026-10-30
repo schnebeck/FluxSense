@@ -24,7 +24,8 @@ from fluxsense.models.identity import IdentityProfile
 from fluxsense.models.result import CheckStatus
 from fluxsense.validate import run_plausibility
 from fluxsense.validate.core import CheckContext
-from fluxsense.validate.general import validate_bic, validate_iban
+from fluxsense.formats.builtin import BIC
+from fluxsense.formats.iban import iban_valid as validate_iban
 
 GOOD_INVOICE: Dict[str, Any] = {
     "meta_header": {"sender": {"company": "Muster GmbH", "vat_id": "DE123456789", "country": "DE"},
@@ -116,7 +117,7 @@ def test_iban_and_bic() -> None:
     assert validate_iban("DE44 9901 2345 0532 0130 00")
     assert not validate_iban("DE44 9901 2345 0532 0130 01")
     assert not validate_iban("DE44990123450532013")
-    assert validate_bic("XMPLDEFFXXX") and validate_bic("XMPLDEFF") and not validate_bic("COBA-DE")
+    assert BIC.valid("XMPLDEFFXXX") and BIC.valid("XMPLDEFF") and not BIC.valid("COBA-DE")
     fields = copy.deepcopy(GOOD_INVOICE)
     fields["bodies"]["finance_body"]["payment_accounts"][0]["iban"] = "DE44990123450532013001"
     assert "iban.checksum" in failed(run(fields))

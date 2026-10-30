@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from fluxsense.grounding.normalize import compact, parse_date
 
-CONTRACT_VERSION: str = "1.7"
+CONTRACT_VERSION: str = "1.8"
 
 
 @dataclass(frozen=True)
@@ -821,21 +821,6 @@ def labelled_values(labels: Sequence[str], lines: Sequence[str]) -> List[str]:
                 if rest:
                     values.append(rest)
     return values
-
-
-_VAT_ID_RE = re.compile(r"^(?:DE\d{9}|ATU\d{8}|[A-Z]{2}[0-9A-Z+*.]{8,12})$")
-_TAX_NUMBER_RE = re.compile(r"^\d{2,3}/\d{3,4}/\d{4,5}$|^\d{11}$|^\d{13}$")
-
-
-def valid_tax_id(value: object, vat: bool = False) -> bool:
-    """§7: a VAT ID ('DE123456789') or a German tax number ('123/456/78901', 11 or 13 digits); a BLZ or account number is
-    neither."""
-    text = re.sub(r"\s+", "", str(value or "")).upper()
-    if not text:
-        return False
-    if vat or text[:2].isalpha():
-        return _VAT_ID_RE.match(text) is not None
-    return _TAX_NUMBER_RE.match(text) is not None
 
 
 def is_name_fragment(value: object) -> bool:

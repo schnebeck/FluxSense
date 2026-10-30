@@ -19,7 +19,8 @@ from typing import Any, Dict, List
 from fluxsense.catalog import default_catalog
 from fluxsense.extract.base import PageText, TextLayer
 from fluxsense.grounding.harness import snap_ibans, snap_ungrounded
-from fluxsense.grounding.snap import damerau, iban_candidates, iban_valid, normalize_iban, snap_value
+from fluxsense.formats.iban import iban_valid, normalize_iban
+from fluxsense.grounding.snap import damerau, iban_candidates, snap_value
 from fluxsense.models.result import FieldEvidence, GroundingStatus
 
 PAYEE = "DE44990123450532013000"
@@ -95,7 +96,7 @@ def test_snap_ungrounded_records_original() -> None:
 def test_iban_checksum_repair_candidates(tmp_path: Any, monkeypatch: Any) -> None:
     """A single visual confusion (0 read as 6) is undone via mod-97; ranking prefers known IBANs and real BLZ."""
     from fluxsense.grounding.blz import known_german_blz, load_blz
-    from fluxsense.grounding.snap import choose_iban_repair, iban_repair_candidates, rank_iban_candidates
+    from fluxsense.formats.iban import choose_iban_repair, iban_repair_candidates, rank_iban_candidates
     broken = PAYEE[:12] + "6" + PAYEE[13:]          # 0 misread as 6 in the account number
     assert not iban_valid(broken)
     candidates = iban_repair_candidates(broken)

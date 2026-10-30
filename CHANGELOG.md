@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Field contract 1.8, §13: text levels per page (`raw`, `clean` -
+  dehyphenated, soft hyphens removed, running text reflowed to paragraphs,
+  addresses / tables / lists line-based - and `corrected` with the
+  corrections list `{page, offset, bbox, before, after, reason,
+  evidence_kind}`); digital text is never corrected.
+- Format registry `fluxsense.formats`: IBAN, BIC, EAN / GTIN, ISBN-10 / -13,
+  VAT ID, German tax number and Steuer-ID, dates, times, postcodes, card
+  numbers - shape per position, checksum, normalisation, OCR confusion map.
+  The IBAN, BIC and tax-ID checks of grounding, plausibility and the
+  contract now use it; applications can pass their own formats per call
+  (`AnalyzeOptions.formats`).
+- Evidence-based correction after the plausibility checks: unique
+  OCR-explained dictionary words (hunspell via `hunspell` / `enchant-2`,
+  skipped when not installed; `text.spell_check`), forced repairs of fixed
+  formats by position class + checksum, and native-resolution crop re-reads
+  without the old value for digit confusions and arithmetic mismatches
+  (`text.format_reread`); confirmed printed errors are flagged as document
+  errors. Review hooks `confirm_text` / `confirm_field`.
+- `render_text_layer()`: a searchable copy of a scanned PDF with an
+  invisible text layer from FluxSense's text and geometry (corrected words,
+  soft-hyphen pairs with ActualText, form entries, nothing in signature
+  regions; page images untouched).
 - Field contract 1.7, §12: every scanned page has a handwriting level
   (`none | signature | entries | full`) from the Stage 1.0 page signatures
   or a probe call (`pipeline.handwriting_probe`), output per document

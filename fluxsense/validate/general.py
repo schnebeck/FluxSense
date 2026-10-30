@@ -8,7 +8,7 @@ Version:        0.1.0
 Producer:       thorsten.schnebeck@gmx.net
 Generator:      Claude Opus 5.5
 Description:    Type-independent plausibility: IBAN checksums (ISO 13616) and
-                BIC format/country, date sanity (format, ranges, order, not in
+                BIC format/country (format registry), date sanity (format, ranges, order, not in
                 the future), required-field completeness per type (incl. the
                 German VAT-ID requirement), identity/direction consistency.
 ------------------------------------------------------------------------------
@@ -19,14 +19,13 @@ from datetime import timedelta
 from decimal import Decimal
 from typing import Any, Iterator, List, Tuple
 
+from fluxsense.formats.builtin import BIC
+from fluxsense.formats.iban import iban_valid
 from fluxsense.grounding.normalize import compact, parse_date
 from fluxsense.models.result import CheckResult, Severity
 from fluxsense.stages.identity import party_text, strong_identity_match
 from fluxsense.validate.core import CheckContext, dec, failed, outcome, passed, rule, skipped
 
-BIC_RE = re.compile(r"^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")
-IBAN_LENGTHS = {"DE": 22, "AT": 20, "CH": 21, "NL": 18, "BE": 16, "FR": 27, "IT": 27, "ES": 24, "LU": 20, "GB": 22,
-                "PL": 28, "DK": 18, "SE": 24, "NO": 15, "FI": 18, "IE": 22, "PT": 25, "CZ": 24, "LI": 21}
 DATE_ORDER: Tuple[Tuple[str, str], ...] = (
     ("bodies.finance_body.invoice_date", "bodies.finance_body.due_date"),
     ("bodies.finance_body.order_date", "bodies.finance_body.invoice_date"),
@@ -37,31 +36,6 @@ DATE_ORDER: Tuple[Tuple[str, str], ...] = (
 )
 NOT_FUTURE: Tuple[str, ...] = ("meta_header.doc_date", "bodies.finance_body.invoice_date", "bodies.statement_body.statement_date",
                                "bodies.finance_body.order_date")
-
-
-def validate_iban(iban: str) -> bool:
-    """
-    ISO 13616 mod-97 check (ported from KPaperFlux core/utils/validation.py).
-
-    Args:
-        iban: IBAN (any spacing).
-
-    Returns:
-        True if the checksum and the country length are valid.
-    """
-    value = compact(iban)
-    if not 15 <= len(value) <= 34 or not value[:2].isalpha() or not value[2:4].isdigit():
-        return False
-    expected = IBAN_LENGTHS.get(value[:2])
-    if expected and len(value) != expected:
-        return False
-    numeric = "".join(str(int(c, 36)) for c in value[4:] + value[:4])
-    return int(numeric) % 97 == 1
-
-
-def validate_bic(bic: str) -> bool:
-    """BIC format check (8 or 11 characters)."""
-    return bool(BIC_RE.match(compact(bic)))
 
 
 def _walk(node: Any, path: str = "") -> Iterator[Tuple[str, Any]]:
@@ -82,13 +56,13 @@ def check_ibans(ctx: CheckContext) -> List[CheckResult]:
     out: List[CheckResult] = []
     ibans = [(p, v) for p, v in _walk(ctx.fields) if p.split(".")[-1] in ("iban", "counterparty_iban", "payout_iban") and v]
     for path, value in ibans:
-        out.append(outcome(validate_iban(str(value)), "iban.checksum", "iban", Severity.ERROR,
-                           f"IBAN {value} {'valid' if validate_iban(str(value)) else 'has an invalid checksum or length'}",
+        out.append(outcome(iban_valid(str(value)), "iban.checksum", "iban", Severity.ERROR,
+                           f"IBAN {value} {'valid' if iban_valid(str(value)) else 'has an invalid checksum or length'}",
                            field=path, actual=str(value)))
     for path, value in _walk(ctx.fields):
         if path.split(".")[-1] != "bic" or not value:
             continue
-        if not validate_bic(str(value)):
+        if not BIC.valid(str(value)):
             out.append(failed("iban.bic_format", "iban", Severity.WARNING, f"BIC {value} has an invalid format", field=path))
             continue
         sibling = ctx.get(path.rsplit(".", 1)[0] + ".iban")

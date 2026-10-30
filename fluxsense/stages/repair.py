@@ -25,9 +25,10 @@ from fluxsense.catalog.contract import (DATE_LINE_GROUPS, DATE_TOKEN_RE, FIELD_L
                                        date_labels, date_line_dates, find_labelled, form_signature_dates, labelled_dates,
                                        labelled_values,
                                        never_date_label, number_labels, own_number_hits, previous_statement_days,
-                                       printed_period_pairs, same_value, stamp_exempt,
-                                       valid_tax_id)
+                                       printed_period_pairs, same_value, stamp_exempt)
 from fluxsense.extract.base import PageText, TextLayer
+from fluxsense.formats import valid_tax_id
+from fluxsense.formats.iban import iban_valid
 from fluxsense.grounding.normalize import compact, extract_dates, normalize_text, parse_date, to_decimal
 from fluxsense.log import get_logger
 from fluxsense.models.result import CheckResult, CheckStatus, GroundingStatus, Severity
@@ -958,7 +959,6 @@ def sanitize_bank_identifiers(fields: Dict[str, Any], keep: Optional[Set[str]] =
     that field's format check - a BLZ as tax_id and an account number failing
     mod-97 as IBAN are removed (also where no evidence record checked them).
     """
-    from fluxsense.grounding.snap import iban_valid
     keep = {compact(k) for k in keep or set()}  # IBANs printed with a wrong checksum: kept and flagged (§7)
     notes: List[str] = []
     meta = fields.get("meta_header") or {}

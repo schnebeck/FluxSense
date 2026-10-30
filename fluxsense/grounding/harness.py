@@ -31,14 +31,12 @@ from fluxsense.grounding.matcher import (CHECKED_KINDS, KIND_AMOUNT, KIND_DATE, 
 from fluxsense.grounding.normalize import amount_candidates, compact, parse_date, to_decimal
 from fluxsense.llm.base import LLMBackend, LLMRequest
 from fluxsense.log import get_logger
-from fluxsense.grounding.snap import (SNAP_KINDS, best_iban, good_text, iban_candidates, iban_valid, normalize_iban,
-                                     snap_value)
+from fluxsense.formats.iban import choose_iban_repair, iban_valid, normalize_iban
+from fluxsense.grounding.snap import SNAP_KINDS, best_iban, good_text, iban_candidates, snap_value
 from fluxsense.models.result import (CheckResult, CheckStatus, CorrectionRecord, FieldEvidence, GroundingStatus, Severity,
                                      TableView, TrustReport)
 from fluxsense.prompts import verify as prompts
-from fluxsense.validate.general import validate_iban
 from fluxsense.grounding.blz import known_german_blz
-from fluxsense.grounding.snap import choose_iban_repair
 from fluxsense.vision.zoom import ZoomTarget, Zoomer, binary_choice
 
 logger = get_logger("grounding")

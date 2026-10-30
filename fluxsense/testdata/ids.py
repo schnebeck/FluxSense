@@ -23,6 +23,8 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Tuple
 
+from fluxsense.formats.checksums import iso7064_mod11_10_digit, luhn_valid, mod97_check_digits  # noqa: F401 (luhn_valid: API)
+
 # Bank codes in the 99xxxxxx range: not observed in practice; all generated values are fictional.
 FICTIONAL_BLZ_PREFIX = "99"
 # VAT IDs in the DE9... range: not observed in practice; all generated values are fictional.
@@ -31,8 +33,7 @@ FICTIONAL_VAT_PREFIX = "9"
 
 def iban_check_digits(country: str, bban: str) -> str:
     """ISO 13616 check digits for a country code and BBAN."""
-    digits = "".join(str(int(c, 36)) for c in bban + country + "00")
-    return f"{98 - int(digits) % 97:02d}"
+    return mod97_check_digits(country, bban)
 
 
 def fictional_iban(rng: random.Random) -> str:
@@ -54,12 +55,7 @@ def fictional_bic(rng: random.Random) -> str:
 
 def vat_check_digit(body: str) -> int:
     """ISO 7064 MOD 11,10 check digit of the 8-digit body of a German VAT ID."""
-    product = 10
-    for char in body:
-        total = (int(char) + product) % 10 or 10
-        product = (2 * total) % 11
-    check = 11 - product
-    return 0 if check == 10 else check
+    return iso7064_mod11_10_digit(body)
 
 
 def fictional_vat_id(rng: random.Random) -> str:
@@ -86,13 +82,6 @@ def is_drama_number(text: str) -> bool:
     """True if a printed phone number lies in a reserved drama-number block."""
     digits = re.sub(r"\D", "", text)
     return any(digits.startswith(area + block) and len(digits) == len(area + block) + 3 for area, block in DRAMA_NUMBER_BLOCKS)
-
-
-def luhn_valid(number: str) -> bool:
-    """Luhn (mod 10) check of a card number (non-digits ignored)."""
-    digits = [int(c) for c in re.sub(r"\D", "", number)]
-    total = sum(d if i % 2 == 0 else (d * 2 - 9 if d * 2 > 9 else d * 2) for i, d in enumerate(reversed(digits)))
-    return bool(digits) and total % 10 == 0
 
 
 def fictional_card_number(rng: random.Random) -> str:

@@ -92,7 +92,7 @@ def create_app(settings: Optional[Settings] = None, backend: Optional[LLMBackend
                       ocr_engine: Optional[str] = Query(None, description=f"one of {ENGINES}"),
                       review_vision: Optional[bool] = Query(None), review_text: Optional[bool] = Query(None),
                       grounding: Optional[bool] = Query(None),
-                      include_page_text: bool = Query(False, description="add text_layer.pages[] (page, text, source)")
+                      include_page_text: bool = Query(False, description="add text_layer.pages[] (page, raw text, clean, corrected, corrections)")
                       ) -> AnalysisResult:
         """Analyzes an uploaded PDF."""
         if ocr_engine is not None and ocr_engine not in ENGINES:

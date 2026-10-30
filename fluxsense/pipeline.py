@@ -47,7 +47,7 @@ from fluxsense.log import get_logger
 from fluxsense.models.identity import IdentityProfile
 from fluxsense.models.result import (AnalysisResult, CallRecord, CheckResult, CheckStatus, CorrectionRecord, GroundingStatus,
                                      LogicalDocument, ReviewResult,
-                                     PageTextOut, Severity, SourceInfo, TextLayerInfo)
+                                     Severity, SourceInfo, TextLayerInfo)
 from fluxsense.models.semantic import SemanticExtraction
 from fluxsense.prompts import PROMPT_VERSION
 from fluxsense.review.reviewer import Reviewer
@@ -56,6 +56,8 @@ from fluxsense.stages.classify import ClassificationResult, Classifier, Entity
 from fluxsense.stages.correction import TargetedCorrector
 from fluxsense.stages.extract import Extractor
 from fluxsense.stages import signers
+from fluxsense.text import text_pages
+from fluxsense.text.correct import CHECK_PRINTED_INVALID, FieldCorrector
 from fluxsense.stages.signatures import probe_handwriting
 from fluxsense.stages.identity import (apply_form_semantics, unfilled_form, direction_from_parties, harmonize_parties,
                                       remove_role_labels)
@@ -88,6 +90,8 @@ class AnalyzeOptions:
     grounding: Optional[bool] = None
     audit: Optional[bool] = None
     include_page_text: bool = False
+    formats: List[Any] = field(default_factory=list)  # FormatSpec hints of the application for this call (e.g. a sender's
+    #                                                   customer-number pattern); applied to the field of the same name
 
 
 @dataclass
@@ -312,8 +316,7 @@ class Analyzer:
         result.timings["ai_seconds_per_page"] = round(ai_seconds / pages, 3)
         result.timings["wall_seconds_per_page"] = round((result.timings["analysis_wall"] + prepared.seconds) / pages, 3)
         if options.include_page_text:
-            result.text_layer.pages = [PageTextOut(page=p.page, text=p.best_text(), source=p.best_source() or "native")
-                                       for p in prepared.layer.pages]
+            result.text_layer.pages = text_pages(prepared.layer, self.settings, result, options.formats)
         if result.status != "OK" and result.error_code is None:
             result.error_code = error_code_of(result)
         return result
@@ -321,6 +324,8 @@ class Analyzer:
     def _analyze(self, prepared: Prepared, options: AnalyzeOptions) -> AnalysisResult:
         """Implementation of analyze_prepared()."""
         layer = prepared.layer
+        for page in layer.pages:
+            page.corrections.clear()  # pending text corrections belong to this run
         private_id, business_id = _profiles(self.settings)
         engines = {"llm_base_url": self.settings.llm.base_url, "primary_model": self.settings.models.primary,
                    "vision_model": self.settings.models.vision, "text_engine": layer.engine}
@@ -660,6 +665,17 @@ class Analyzer:
                 doc.corrections.append(record)
             timings["correction"] += round(time.monotonic() - t0, 3)
 
+        t0 = time.monotonic()
+        printed_invalid = {c.field for c in grounding_checks if c.check_id == CHECK_IBAN_PRINTED_INVALID and c.field}
+        format_checks, format_records = FieldCorrector(self.backend, self.settings).run(
+            prepared.path, layer, fields, evidence, report.findings, lambda f: self._evaluate(f, entity, specs),
+            options.formats, printed_invalid)
+        extra_checks += format_checks
+        doc.corrections += format_records
+        if format_records:
+            report = self._evaluate(fields, entity, specs)
+            timings["correction"] += round(time.monotonic() - t0, 3)
+
         disagreements = 0
         if self.settings.grounding.self_consistency:
             disagreements = self._self_consistency(prepared, entity, evidence, extra_checks, private_id, business_id)
@@ -695,7 +711,8 @@ class Analyzer:
             doc.plausibility = score_report(doc.plausibility.checks)
             timings["review"] += round(time.monotonic() - t0, 3)
 
-        printed_invalid = {str(c.actual) for c in doc.plausibility.checks if c.check_id == CHECK_IBAN_PRINTED_INVALID and c.actual}
+        printed_invalid = {str(c.actual) for c in doc.plausibility.checks if c.actual and (
+            c.check_id == CHECK_IBAN_PRINTED_INVALID or (c.check_id == CHECK_PRINTED_INVALID and str(c.field).endswith("iban")))}
         bank_notes = sanitize_bank_identifiers(fields, printed_invalid)
         if bank_notes:
             doc.corrections.append(CorrectionRecord(trigger_checks=["identifiers"], scope="bank identifiers", applied=True,

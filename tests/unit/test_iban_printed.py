@@ -25,7 +25,7 @@ from fluxsense.config import Settings
 from fluxsense.extract.base import PageText, TextLayer
 from fluxsense.grounding.acceptance import assess
 from fluxsense.grounding.harness import CHECK_IBAN_PRINTED_INVALID, GroundingHarness, iban_digit_hints
-from fluxsense.grounding.snap import iban_valid
+from fluxsense.formats.iban import iban_valid
 from fluxsense.models.result import FieldEvidence
 from fluxsense.stages.repair import sanitize_bank_identifiers
 from fluxsense.testdata import ids

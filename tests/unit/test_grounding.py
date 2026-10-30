@@ -238,11 +238,11 @@ def iban_case(monkeypatch: pytest.MonkeyPatch, answer: Dict[str, Any]) -> tuple:
 
 def test_ocr_only_grounding_is_weak_on_scans_and_iban_is_rezoomed(monkeypatch: pytest.MonkeyPatch) -> None:
     """OCR agreeing with the VLM is not independent: the IBAN is re-read on a 400 dpi crop and corrected."""
-    from fluxsense.validate.general import validate_iban
+    from fluxsense.formats.iban import iban_valid
     correct = "DE44990123450532013000"
     fields, ev, outcome, seen = iban_case(monkeypatch, {"answers": [{"id": "F1", "visible": True, "printed": "DE44 9901 2345 0532 0130 00", "matches": False}]})
     assert ev.critical and ev.matched_source == "ocr"
-    assert ev.action == "replaced" and ev.value == correct and validate_iban(fields["meta_header"]["recipient"]["iban"])
+    assert ev.action == "replaced" and ev.value == correct and iban_valid(fields["meta_header"]["recipient"]["iban"])
     assert not any(c.check_id == "grounding.iban_checksum" for c in outcome.checks)
     assert any(r.label.startswith("Zoom verify") for r in seen)
 
@@ -383,7 +383,7 @@ def test_iban_roles_from_the_text_layer() -> None:
 
 def test_irregularly_grouped_iban_is_found() -> None:
     """An IBAN printed in irregular groups ('DE44 990 123 45 0532013000') is cut to the country length and checked."""
-    from fluxsense.grounding.snap import printed_ibans
+    from fluxsense.formats.iban import printed_ibans
     assert printed_ibans("Account DE44 990 123 45 0532013000 Swift Code: MUSTDEFF") == ["DE44990123450532013000"]
     assert printed_ibans("DE44 9901 2345 0532 0130 00") == ["DE44990123450532013000"]
     assert printed_ibans("DE12 3456 7890 1234 5678 90") == []

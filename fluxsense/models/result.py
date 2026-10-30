@@ -275,12 +275,31 @@ class SourceInfo(BaseModel):
     page_count: int
 
 
-class PageTextOut(BaseModel):
-    """Text of one page (optional output, e.g. for a full-text index)."""
+class TextCorrection(BaseModel):
+    """One correction of a page's clean text (text level 'corrected')."""
 
     page: int
-    text: str
+    offset: Optional[int] = Field(None, description="Character offset of 'before' in the page's clean text")
+    bbox: Optional[List[float]] = Field(None, description="Word box [x0,y0,x1,y1] in page points, if known")
+    before: str
+    after: str
+    reason: str = ""
+    evidence_kind: str = Field(..., description="dictionary | format | reread | arithmetic | human")
+    field: Optional[str] = Field(None, description="Field path whose check triggered the correction")
+
+
+class PageTextOut(BaseModel):
+    """Text of one page in three levels (optional output, e.g. for a full-text index)."""
+
+    page: int
+    text: str = Field(..., description="Level 'raw': the text as read (verbatim; evidence pointers reference it)")
     source: str = Field(..., description="native | ovis | ocr | docling | stream")
+    clean: Optional[str] = Field(None, description="Level 'clean': dehyphenated, soft hyphens removed, running text "
+                                                   "reflowed to paragraphs (addresses, tables, lists, header/footer "
+                                                   "stay line-based)")
+    corrected: Optional[str] = Field(None, description="Level 'corrected': clean plus the corrections")
+    corrections: List[TextCorrection] = Field(default_factory=list)
+    native: bool = Field(False, description="True for printed digital text (never spell-corrected)")
 
 
 class TextLayerInfo(BaseModel):

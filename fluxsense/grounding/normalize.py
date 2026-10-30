@@ -227,11 +227,6 @@ def parse_date(value: object) -> Optional[date]:
     return min(found) if len(found) == 1 else None
 
 
-def normalize_iban(value: str) -> str:
-    """IBAN without spaces, uppercase."""
-    return compact(value)
-
-
 _SOFT_HYPHEN_RE = re.compile("\u00ad\\s*")
 _LINEBREAK_HYPHEN_RE = re.compile(r"(\w)-[ \t]*\r?\n[ \t]*([a-zäöüß])")
 

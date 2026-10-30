@@ -189,6 +189,16 @@ class IdentitySettings(BaseModel):
     business: IdentityProfile = Field(default_factory=IdentityProfile)
 
 
+class TextSettings(BaseModel):
+    """Text levels and evidence-based corrections (raw / clean / corrected)."""
+
+    spell_check: bool = Field(True, description="Dictionary correction of OCR words (hunspell dictionaries through the "
+                                                "'hunspell' or 'enchant-2' command; skipped when none is installed)")
+    spell_languages: List[str] = Field(default_factory=lambda: ["de_DE", "en_US"])
+    format_reread: bool = Field(True, description="Fixed-format fields (IBAN, BIC, VAT ID, ...) that fail their check and "
+                                                  "arithmetic mismatches are re-read on a native-resolution crop")
+
+
 class ServerSettings(BaseModel):
     """REST server."""
 
@@ -209,6 +219,7 @@ class Settings(BaseModel):
     plausibility: PlausibilitySettings = Field(default_factory=PlausibilitySettings)
     hooks: HookSettings = Field(default_factory=HookSettings)
     identity: IdentitySettings = Field(default_factory=IdentitySettings)
+    text: TextSettings = Field(default_factory=TextSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
 
     def public_dump(self) -> Dict[str, Any]:

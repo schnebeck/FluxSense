@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.7 (2026-10-30). This contract defines what each core field of a
+Version 1.8 (2026-10-30). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -26,7 +26,8 @@ deliberate decision and bumps the version.
    DIN 5008 address window), `check` (confirmed by a deterministic check),
    `model` (model reading only). Only `label`/`geometry`/`check` values that
    are also grounded in the text/OCR layer are auto-accepted; `model`-only
-   values are flagged for review.
+   values are flagged for review. A value a person confirmed in review
+   (`confirm_field`) has provenance `human` and is accepted.
 
 ## 1. Logical documents (segmentation)
 
@@ -145,6 +146,11 @@ is printed, transaction IDs.
   auto-accepted. A misread IBAN is removed.
 - Bank identifiers (BLZ, account number, BIC) are never a tax ID, VAT ID or
   IBAN unless they pass that field's format check.
+- On scanned pages an invalid IBAN (and every other fixed format, §13.3) is
+  corrected only by the evidence of the image: a forced repair (a letter
+  at a digit position, the only candidate passing mod-97) or a re-read of
+  the crop that passes the check; a re-read that confirms the printed
+  value keeps it as a document error.
 - §2.8: the ordering customer (`Auftraggeber`, `Kontoinhaber`) is never the
   sender.
 
@@ -380,3 +386,90 @@ follows as a hint). A value of such a page is auto-accepted only when it
 stands in an agreed line (or in printed digital text) and passes the other
 rules ("handwritten page: not in a line two independent readings agree
 on").
+
+## 13. Text levels, formats and corrections
+
+### 13.1 Text levels
+
+With `include_page_text` every page has three levels
+(`text_layer.pages[]`):
+
+- `text` (`raw`): the text as read, verbatim and unchanged; evidence
+  pointers and snippets reference it.
+- `clean`: line-break hyphenation joined (only before a lowercase
+  continuation, so `Musterstadt-\nLinden` stays), soft hyphens removed,
+  running text reflowed to one line per paragraph - judged per layout item
+  (without layout: per blank-line paragraph): every line but the last well
+  filled, no list item, table row, address line (postcode + town) or line
+  ending in a colon. Address blocks, tables, lists, short lines and
+  header / footer stay line-based.
+- `corrected`: `clean` plus `corrections[]`
+  (`{page, offset, bbox, before, after, reason, evidence_kind, field}`;
+  `offset` in the clean text, `bbox` in page points where a word box is
+  known; `evidence_kind` = `dictionary | format | reread | arithmetic |
+  human`). Overlapping corrections keep the strongest evidence (human >
+  re-read / arithmetic > format > dictionary).
+
+Printed digital text (`native: true`) is never corrected by these rules;
+only a person's confirmation applies to it.
+
+### 13.2 Format registry
+
+`fluxsense.formats` holds one spec per fixed format: variants as
+per-position character classes, checksum / semantic check, normaliser and
+the OCR confusion map (`O/Q/D-0`, `I/L-1`, `S-5`, `B-8`, `Z-2`, `G-6`,
+`T-7`, `A-4`; digit / digit confusions only for checksum-driven repairs):
+IBAN (per-country BBAN structure and length, mod 97), BIC (8 / 11), EAN /
+GTIN 8, 12, 13, 14 (mod 10), ISBN-10 (mod 11, `X`) and ISBN-13, VAT ID (DE
+with ISO 7064 MOD 11,10, ATU, other countries by shape), German tax
+number (shape) and Steuer-ID (ISO 7064 MOD 11,10 and the digit rule),
+dates, times, postcodes (DE 5 digits, AT / CH 4) and card numbers (Luhn).
+An application may pass its own formats for one call
+(`AnalyzeOptions.formats`, `FormatSpec.custom(name, patterns, checksum)`,
+e.g. a sender's customer-number pattern): such a format applies to the
+field of the same name and to matching spans of the text. Nothing of it is
+stored.
+
+### 13.3 Evidence-based correction ("the image decides")
+
+After the plausibility checks, on scanned pages only:
+
+- Words: a dictionary word (hunspell dictionaries `text.spell_languages`
+  through `hunspell` / `enchant-2`; skipped when none is installed)
+  replaces an unknown word only as the unique suggestion within edit
+  distance 2 whose differences are typical OCR confusions (`rn/m`,
+  `li/ll`, `l/i`, `U/Ü`, ...). Names (parties, persons, signers, form name
+  entries, words after `Herrn` / `Frau` / `Dr.`), company names, ALL-CAPS,
+  tokens next to digits, e-mails and URLs are never touched.
+- Fixed formats: a character at a wrong position class is replaced when
+  exactly one candidate passes the check. Digit / digit confusions and
+  arithmetic mismatches (quantity x unit price != line total, net + tax !=
+  gross) are re-read on a native-resolution crop of the value without
+  showing the old value (`text.format_reread`): the re-read replaces the
+  value only if it differs from the OCR value and makes the check pass; a
+  re-read that confirms the printed value keeps it and flags a document
+  error (`format.printed_invalid`, `arithmetic.printed_inconsistent`);
+  anything else keeps it for review (`format.reread_conflict`,
+  `arithmetic.reread_conflict`). In the page text the IBAN is repaired
+  anywhere, the other built-in formats only after their label on the line.
+- A value corrected by a check stays visible as corrected (evidence
+  `action: corrected`, `original_value`, a correction record and the
+  text-level correction); it is auto-accepted only when the re-read and the
+  check agree - a correction by the format alone is flagged
+  (`format.corrected`).
+- Review hooks: `confirm_text(page, before, after)` adds a `human`
+  correction to a page's text levels, `confirm_field(doc, path, value)` sets
+  a field (provenance `human`, accepted, recorded).
+
+### 13.4 Searchable text layer
+
+`render_text_layer(pdf_path, layer, out_path, result)` writes a copy of the
+PDF with an invisible text layer (render mode 3) on the scanned pages; the
+page images and the source file are untouched, pages with a text layer of
+their own (digital text, a scanner's OCR layer) stay as they are. Words
+come from the OCR word boxes, else from the line boxes of the layout items
+split in proportion to the characters; corrected words stand at their
+image positions; a hyphenated pair keeps its visible split, the hyphen
+becomes U+00AD and one `/ActualText` span carries the joined word;
+handwritten form entries stand at their entry regions; nothing is placed
+inside signature regions.

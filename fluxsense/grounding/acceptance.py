@@ -37,18 +37,19 @@ from fluxsense.catalog.contract import (DATE_TOKEN_RE, FIELD_LABELS, FIRST_PAGE_
                                         is_document_title, not_a_party, number_labels, own_number_hits, same_value, signature_line,
                                         subject_context, HEADER_ONLY_NUMBER_LABELS, ORDERING_CUSTOMER_LABELS, PAYEE_LABELS,
                                         form_signature_dates, geometry_policy, is_name_fragment, labelled_values, party_problem,
-                                        derived_period_value, previous_statement_days, printed_period_pairs,
-                                        valid_tax_id)
+                                        derived_period_value, previous_statement_days, printed_period_pairs)
 from fluxsense.extract.base import TextLayer
+from fluxsense.formats import valid_tax_id
+from fluxsense.formats.iban import iban_valid
 from fluxsense.grounding.harness import _get, holds
 from fluxsense.grounding.matcher import build_index, ground_value
 from fluxsense.grounding.normalize import compact, extract_amounts, extract_dates, normalize_text, parse_date, to_decimal
-from fluxsense.grounding.snap import iban_valid
 from fluxsense.layout import din5008
 from fluxsense.models.result import CheckResult, CheckStatus, FieldEvidence, GroundingStatus
 from fluxsense.stages.identity import is_role_label, unfilled_form
 from fluxsense.stages.repair import sender_only_in_table, stamp_dates
 from fluxsense.validate.contract_terms import payment_checked_paths
+from fluxsense.text.correct import REVIEW_CHECKS
 from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR
 
 LABEL, GEOMETRY, CHECK, MODEL = "label", "geometry", "check", "model"
@@ -728,7 +729,8 @@ class Assessor:
             reasons.append("handwritten form field (single reading)")
         if self._unconfirmed_handwriting(ev):
             reasons.append("handwritten page: not in a line two independent readings agree on")
-        named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous", "grounding.iban_printed_invalid")
+        named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous", "grounding.iban_printed_invalid",
+                 *REVIEW_CHECKS)
         date_reasons = list(dict.fromkeys(c.message for c in self.checks if c.check_id in named and c.field == ev.path))
         if date_reasons:  # §9 / §12: name the conflicting value, the ambiguous readings or the year decision
             reasons += date_reasons

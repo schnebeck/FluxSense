@@ -330,7 +330,8 @@ def test_table_column_header_is_no_document_label() -> None:
 def test_bank_transfer_confirmation() -> None:
     """§2.8: routing by vocabulary, parties (bank = sender, ordering customer = recipient, payee = counterparty), no invoice
     totals; §7: BLZ / account numbers are no tax ID or IBAN (synthetic)."""
-    from fluxsense.catalog.contract import is_bank_transfer_confirmation, valid_tax_id
+    from fluxsense.catalog.contract import is_bank_transfer_confirmation
+    from fluxsense.formats import valid_tax_id
     from fluxsense.extract.base import PageText, TextLayer
     from fluxsense.stages.classify import Entity, route_transfer_confirmations
     from fluxsense.stages.repair import fix_transfer_confirmation, sanitize_bank_identifiers

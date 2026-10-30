@@ -29,7 +29,8 @@ from fluxsense.catalog import contract
 from fluxsense.config import Settings
 from fluxsense.extract import build_text_layer
 from fluxsense.extract.native import has_font_resources
-from fluxsense.grounding.snap import iban_valid, printed_ibans
+from fluxsense.formats import valid_tax_id
+from fluxsense.formats.iban import iban_valid, printed_ibans
 from fluxsense.layout.din5008 import analyze, recipient_from_window
 from fluxsense.llm.base import LLMRequest
 from fluxsense.stages import zugferd
@@ -69,8 +70,8 @@ def test_identifiers_are_valid_and_fictional() -> None:
         iban = ids.fictional_iban(rng)
         assert iban_valid(iban) and iban[4:6] == "99" and len(iban) == 22
         vat = ids.fictional_vat_id(rng)
-        assert contract.valid_tax_id(vat, vat=True) and vat[2] == "9" and int(vat[-1]) == ids.vat_check_digit(vat[2:10])
-        assert contract.valid_tax_id(ids.fictional_tax_number(rng))
+        assert valid_tax_id(vat, vat=True) and vat[2] == "9" and int(vat[-1]) == ids.vat_check_digit(vat[2:10])
+        assert valid_tax_id(ids.fictional_tax_number(rng))
     assert ids.vat_check_digit("13669597") == 6  # published ISO 7064 MOD 11,10 worked example
 
 

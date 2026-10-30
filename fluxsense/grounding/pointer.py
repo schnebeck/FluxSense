@@ -20,7 +20,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.normalize import compact, dehyphenate, extract_dates, parse_date, to_decimal
-from fluxsense.grounding.snap import IBAN_CANDIDATE_RE, damerau, iban_valid
+from fluxsense.formats.iban import IBAN_CANDIDATE_RE, iban_valid
+from fluxsense.grounding.snap import damerau
 from fluxsense.models.result import FieldEvidence
 
 LINE_ID_RE = re.compile(r"p(\d+):L(\d+)", re.IGNORECASE)

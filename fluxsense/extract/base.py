@@ -67,6 +67,7 @@ class PageText:
     blocks: List[Tuple[float, float, float, float, str]] = field(default_factory=list)
     native_ocr: bool = False  # the 'native' text is a scanner's OCR layer over a page image, not printed digital text
     handwriting: Optional[str] = None  # handwriting level none | signature | entries | full (None: unknown, §12)
+    corrections: List[Any] = field(default_factory=list)  # pending TextCorrection records from checks / re-reads
 
     def scanned(self) -> bool:
         """True if the page has no printed digital text (an image page, or a scanner's OCR layer over one)."""
