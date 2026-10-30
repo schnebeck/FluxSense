@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Field contract 1.6, §12: form fields of scanned form pages are read by
+  their printed label - one native-resolution crop per field, a typed
+  question without the full-page value; dates with their candidate
+  readings; the readings feed the extraction (FORM FIELDS) and grounding
+  and map to the schema where the label is unambiguous
+  (`pipeline.fieldread`).
+- Defensive detection of runaway repetition and early stops in OvisOCR3
+  answers, with a re-read of the page as overlapping tiles.
 - Field contract 1.5: contract payment terms (total, components with a
   sum check, frequency, due rule, payee account, reference), deposit and
   contract object; minimum term / termination waiver separate from the

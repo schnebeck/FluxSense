@@ -126,6 +126,9 @@ class PipelineSettings(BaseModel):
     custom_types_file: str = ""
     verify_mode: str = Field("inline", description="inline | deferred (verify calls batched after all documents, one model load)")
     deferred_rounds: int = Field(4, description="Max queue/replay rounds in deferred mode")
+    fieldread: bool = Field(True, description="Form fields of scanned form pages read by their printed label (one crop "
+                                              "per field, §12)")
+    fieldread_max_fields: int = Field(24, description="Maximum fields read per page")
     pointer_extraction: bool = Field(False, description="EXPERIMENT: numbered text lines on native pages; the model "
                                      "points to the line and the text layer supplies the characters")
 

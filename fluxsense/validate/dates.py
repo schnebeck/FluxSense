@@ -167,7 +167,8 @@ def _dates_in(text: Any) -> List[date]:
 
 def visual_reading(ev: FieldEvidence) -> bool:
     """The value comes from a zoom / vision reading (or replaced a first reading)."""
-    return ev.escalation_level >= 2 or ev.status == GroundingStatus.VERIFIED or ev.action == "replaced"
+    return ev.escalation_level >= 2 or ev.status == GroundingStatus.VERIFIED or ev.action == "replaced" \
+        or ev.matched_source == "fieldread"
 
 
 def ambiguous_year(ev: FieldEvidence) -> bool:

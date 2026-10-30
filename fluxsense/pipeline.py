@@ -33,6 +33,7 @@ from fluxsense.catalog import Catalog, default_catalog
 from fluxsense.catalog.contract import contract_for, form_filler, geometry_policy, subject_context
 from fluxsense.catalog.registry import load_custom_types
 from fluxsense.config import Settings
+from fluxsense.extract.fieldread import FieldReader, apply_fields, map_fields
 from fluxsense.extract import build_text_layer
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.acceptance import assess
@@ -209,7 +210,7 @@ class Analyzer:
         """
         start = time.monotonic()
         path = Path(pdf_path)
-        layer = build_text_layer(path, self.settings, engine)
+        layer = build_text_layer(path, self.settings, engine, backend=self.backend)  # OvisOCR3 calls share the client
         source = SourceInfo(path=str(path), sha256=sha256(path), size_bytes=path.stat().st_size, page_count=layer.page_count)
         return Prepared(path=path, source=source, layer=layer, zugferd=zugferd.read_zugferd(path),
                         seconds=round(time.monotonic() - start, 3))
@@ -384,6 +385,14 @@ class Analyzer:
         audit = self.settings.pipeline.visual_audit if options.audit is None else options.audit
         if xml and not self.settings.pipeline.zugferd_visual_audit:
             audit = False
+        form_fields: List[Any] = []
+        if self.settings.pipeline.fieldread:
+            t0 = time.monotonic()
+            form_pages = [layer.page(p) for p in pages if layer.page(p) is not None]
+            form_fields = FieldReader(self.backend, self.settings).run(prepared.path, form_pages)  # type: ignore[arg-type]
+            apply_fields(form_pages, form_fields)  # type: ignore[arg-type]
+            if form_fields:
+                timings["fieldread"] = timings.get("fieldread", 0.0) + round(time.monotonic() - t0, 3)
         t0 = time.monotonic()
         outcome = self.extractor.run(prepared.path, layer, pages, entity.type_tags, private_id, business_id,
                                      zugferd_present=bool(xml), audit=audit)
@@ -577,6 +586,12 @@ class Analyzer:
                 extra_checks.append(CheckResult(check_id="audit.type_mismatch", rule="audit", status=CheckStatus.FAIL,
                                                 severity=Severity.INFO, message=f"visual audit suggests {integrity['suggested_types']}"))
 
+        if form_fields:
+            field_notes, field_checks = map_fields(fields, evidence, form_fields)
+            extra_checks += field_checks
+            if field_notes:
+                doc.corrections.append(CorrectionRecord(trigger_checks=["fieldread"], scope="form fields", applied=True,
+                                                        note="; ".join(field_notes)))
         t0 = time.monotonic()
         report = self._evaluate(fields, entity, specs)
         timings["plausibility"] += round(time.monotonic() - t0, 3)

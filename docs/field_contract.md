@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.5 (2026-10-30). This contract defines what each core field of a
+Version 1.6 (2026-10-30). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -226,3 +226,32 @@ insurance policies carry their payment terms in `legal_body`:
   EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), `event_date` /
   `event_end_date`, `subject_address` (with `location_detail`), as printed or
   written.
+
+## 12. Form fields read by their label
+
+On scanned pages of forms (no native text layer, at least three printed
+field labels of the lexicon) each printed label is read on its own:
+
+- The label (`Ort, Datum`, `..., den`, `Einzug am`, `Name des ...`,
+  `Anschrift ...`, `Geschoss / Lage`, `Telefon`, `für folgende Person(en)`,
+  ...) gives the field kind (date, place and date, name, persons, address,
+  location, phone).
+- Its entry region - above / around the label (label under the entry
+  line), to its right (inline), or below it for a header label (`...
+  lauten:`) - is cropped from the scan's native resolution and read by the
+  vision model with the label and a type hint only; the full-page value is
+  never shown. An empty field is answered `EMPTY` and yields no value.
+- Dates are normalised to ISO. When separators and digits can be confused
+  (`1|10|26`: a bar is a separator or a one) every valid reading is kept;
+  more than one reading flags the field (`fieldread.ambiguous`, naming the
+  readings).
+- The readings form a FORM FIELDS block of the page text for the
+  extraction and a `fieldread` text source for grounding; a value equal to
+  a reading has provenance `label`.
+- Unambiguous labels map directly: `Ort, Datum` / `..., den` -> doc_date,
+  `Einzug am` / `Auszug am` -> certified_event and event_date, the persons
+  -> certified_persons, the issuer's name and address -> sender, the flat
+  address and floor -> subject_address. A differing full-page value is
+  replaced by the reading and flagged with both values
+  (`fieldread.disagreement`); a full-page value for an empty field is
+  flagged.

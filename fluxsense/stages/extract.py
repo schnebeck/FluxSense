@@ -46,6 +46,7 @@ from fluxsense.models.result import FieldEvidence, TableView
 from fluxsense.models.semantic import BODY_MODELS, MetaHeader
 from fluxsense.prompts import guide
 from fluxsense.prompts import stage2 as prompts
+from fluxsense.extract.fieldread import form_fields_block
 from fluxsense.tables.stitch import drop_artefact_rows, merge_chunks, render_markdown, stitch_tables
 
 logger = get_logger("stages.extract")
@@ -453,7 +454,8 @@ class Extractor:
             text = dehyphenate(budget.compact_markdown(page.best_text())) if page else ""
             if strip_tables:
                 text = budget.strip_markdown_tables(text)
-            parts.append(f"=== PAGE {p} ===\n{text}")
+            block = form_fields_block(page) if page else ""
+            parts.append(f"=== PAGE {p} ===\n{block}{text}")
         return "\n\n".join(parts)[:limit]
 
     def validate(self, clean: Dict[str, Any]) -> List[str]:

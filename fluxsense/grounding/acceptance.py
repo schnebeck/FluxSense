@@ -46,7 +46,7 @@ from fluxsense.models.result import CheckResult, CheckStatus, FieldEvidence, Gro
 from fluxsense.stages.identity import is_role_label, unfilled_form
 from fluxsense.stages.repair import sender_only_in_table, stamp_dates
 from fluxsense.validate.contract_terms import payment_checked_paths
-from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR, date_check_messages
+from fluxsense.validate.dates import CHECK_CONSISTENCY, CHECK_YEAR
 
 LABEL, GEOMETRY, CHECK, MODEL = "label", "geometry", "check", "model"
 ACCEPTED_PROVENANCE: Tuple[str, ...] = (LABEL, GEOMETRY, CHECK)
@@ -77,6 +77,22 @@ LEGAL_FOOTER_RE = re.compile(r"(vorstand|aufsichtsrat|geschäftsführ|geschaefts
                              r"\bhrb\b|\bhra\b|handelsregister|ust-?id|steuernummer)", re.IGNORECASE)
 CLOSING_RE = re.compile(r"(mit freundlichen grüßen|mit freundlichen gruessen|freundliche grüße|hochachtungsvoll|viele grüße|"
                         r"kind regards|best regards)", re.IGNORECASE)
+
+
+def fieldread_values(layer: TextLayer, pages: Sequence[int]) -> Set[str]:
+    """Entries and ISO dates of the FORM FIELDS readings ('label: entry -> iso') of the pages."""
+    values: Set[str] = set()
+    for number in pages:
+        page = layer.page(number)
+        for line in ((page.sources.get("fieldread") or "") if page else "").splitlines():
+            entry = line.split(": ", 1)[1] if ": " in line else ""
+            if not entry or entry.startswith("("):
+                continue
+            entry = re.sub(r"\s*\(readings: .*\)$", "", entry)
+            for part in entry.split(" -> "):
+                values.add(part.strip())
+            values |= {p.strip() for p in re.split(r"[;\n]", entry) if p.strip()}
+    return values
 
 
 def party_name_text(party: Any) -> str:
@@ -277,6 +293,7 @@ class Assessor:
         self.page_lines = {p: layer.page(p).best_text().splitlines() for p in pages if layer.page(p)}
         self.first_lines = self.page_lines.get(pages[0], []) if pages else []
         self.lines = [line for p in pages for line in self.page_lines.get(p, [])]
+        self.fieldread = fieldread_values(layer, pages)
         self.text = "\n".join(self.lines)
         self.text_norm = normalize_text(self.text)
         self.checks = [c for c in checks if c.status == CheckStatus.FAIL and c.field]
@@ -477,10 +494,21 @@ class Assessor:
         label = self._label(ev)
         if label:
             return LABEL, label
+        if ev.status == GroundingStatus.GROUNDED and self._field_reading(ev):
+            return LABEL, "read from the crop of its printed form label (§12)"
         geometry = self._geometry(ev)
         if geometry:
             return GEOMETRY, geometry
         return MODEL, ""
+
+    def _field_reading(self, ev: FieldEvidence) -> bool:
+        """True if the value is a form-field reading of its printed label (§12)."""
+        if ev.matched_source == "fieldread":
+            return True
+        if ev.kind == "date":
+            parsed = parse_date(ev.value)
+            return parsed is not None and parsed.isoformat() in self.fieldread
+        return bool(ev.value) and compact(str(ev.value)) in {compact(v) for v in self.fieldread}
 
     def _labelled_gross(self, value: Any) -> bool:
         """The amount due equals the grand total, and that total is confirmed or printed next to a total label."""
@@ -600,10 +628,11 @@ class Assessor:
         if ev.path in self.outranked:
             reasons.append("an earlier listed label prints another number (§0.4)")
         reasons += self._identifier_reasons(ev)
-        date_reasons = date_check_messages(self.checks, ev.path)
-        if date_reasons:  # §9: name the conflicting field and value (or the ambiguous-year decision)
+        named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous")
+        date_reasons = list(dict.fromkeys(c.message for c in self.checks if c.check_id in named and c.field == ev.path))
+        if date_reasons:  # §9 / §12: name the conflicting value, the ambiguous readings or the year decision
             reasons += date_reasons
-            failing = [f for f in failing if f not in (CHECK_CONSISTENCY, CHECK_YEAR)]
+            failing = [f for f in failing if f not in named]
         if din5008.GEOMETRY_CONFLICT in failing:
             reasons.append("geometry/model conflict")
             failing = [f for f in failing if f != din5008.GEOMETRY_CONFLICT]
