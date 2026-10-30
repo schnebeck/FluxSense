@@ -514,9 +514,10 @@ class Assessor:
     def _single_reading(self, ev: FieldEvidence) -> bool:
         """
         §12: a form-field reading without an independent second reading - the
-        same value in another text source of the page (native text layer, OCR
-        / layout text). The full-page extraction is no second reading: it saw
-        the FORM FIELDS block.
+        same value printed in the page's digital text layer. OCR-derived text
+        (a scanner's invisible OCR layer, OvisOCR3, Docling, ocrmypdf) is no
+        independent confirmation of handwriting, and the full-page extraction
+        saw the FORM FIELDS block.
         """
         if not self.fieldread or not self._field_reading(ev):
             return False
@@ -525,9 +526,9 @@ class Assessor:
             pages = []
             for number in self.pages:
                 page = self.layer.page(number)
-                if page is not None:
-                    pages.append(PageText(page=number, width=page.width, height=page.height,
-                                          sources={k: v for k, v in page.sources.items() if k != "fieldread"}))
+                if page is not None:  # only printed digital text: OCR-derived sources share the misreading risk
+                    digital = {} if page.native_ocr else {k: v for k, v in page.sources.items() if k == "native"}
+                    pages.append(PageText(page=number, width=page.width, height=page.height, sources=digital))
             self._independent = build_index(TextLayer(pages=pages, engine="independent"), self.pages)
         return ground_value(ev.kind, ev.value, self._independent).status != GroundingStatus.GROUNDED
 

@@ -68,6 +68,8 @@ LEXICON: Tuple[LabelRule, ...] = (
     _rule(r"^\W*name\s+und\s+anschrift\s+des\s+wohnungsgebers", ADDRESS, "sender", below=True),
     _rule(r"^\W*(?:name|vor-?\s*und\s+zuname|name,\s*vorname)\s+des\s+wohnungsgebers", NAME, "sender.name"),
     _rule(r"^\W*anschrift\s+des\s+wohnungsgebers", ADDRESS, "sender.address"),
+    _rule(r"^\W*(?:name\s+des\s+|vor-?\s*und\s+zuname\s+des\s+)?(?:antragsteller(?:in|s)?|aussteller(?:in|s)?)\b", NAME,
+          "sender.name"),
     _rule(r"^\W*(?:\[.?\]\s*)?einzug\s+am", DATE, "event.MOVE_IN"),
     _rule(r"^\W*(?:\[.?\]\s*)?auszug\s+am", DATE, "event.MOVE_OUT"),
     _rule(r"^\W*anschrift\s+der\s+wohnung|^\W*(?:postleitzahl|plz),?\s*ort,?\s*stra(?:ß|ss)e", ADDRESS, "subject_address"),
@@ -143,6 +145,8 @@ class FormField:
         if self.value and self.value != self.entry:
             alt = f" (readings: {', '.join(self.candidates)})" if len(self.candidates) > 1 else ""
             return f"{self.label}: {self.entry} -> {self.value}{alt}"
+        if self.kind == NAME and not self.target:
+            return f"{self.label}: {self.entry} [a name field of the form - not by itself the sender or recipient]"
         return f"{self.label}: {self.entry}"
 
 
@@ -196,6 +200,9 @@ def find_labels(page: PageText) -> List[FormField]:
         match = re.match(r"^(.*?(?::|\bam|\bden|\bvom|\bbis))\s+\S", label)
         if match and rule.kind in (DATE, PLACE_DATE, NAME, ADDRESS, LOCATION, PHONE) and len(match.group(1)) < len(label):
             label, inside = match.group(1).strip(), True  # the entry is inside the item, after the label
+        if any(f.label == label and abs((f.bbox[1] + f.bbox[3]) / 2 - (box[1] + box[3]) / 2) < max(6.0, box[3] - box[1])
+               for f in fields):
+            continue  # the same label repeated on one line (e.g. several 'Tel.:' cells): read once
         fields.append(FormField(page.page, label, rule.kind, rule.target, box, ticked=ticked, inside=inside))
     return fields
 
@@ -282,7 +289,7 @@ def form_like(page: PageText, labels: Sequence[FormField], handwriting: bool) ->
     ('..., den', 'Ort, Datum', 'Datum/Unterschrift', 'Datum:' - then only
     those fields are read).
     """
-    if page.sources.get("native", "").strip():
+    if page.sources.get("native", "").strip() and not page.native_ocr:
         return False
     return bool(labels) and (handwriting or len(labels) >= MIN_LABELS or any(l.kind in (DATE, PLACE_DATE) for l in labels))
 
@@ -376,6 +383,15 @@ class FieldReader:
             png = page.get_pixmap(dpi=dpi, clip=clip).tobytes("png")
         return fit_image(Image.open(io.BytesIO(png)).convert("RGB"), 1280)
 
+    @staticmethod
+    def _ink_at_entry(fld: FormField, overview: Image.Image, width: float, height: float, labels: Sequence[FormField]) -> bool:
+        """Ink to the right of a label (inline entry) or above it (entry line over the label), the label itself excluded."""
+        right = entry_region(fld, width, height, False, True, labels)
+        up = entry_region(fld, width, height, False, False, labels)
+        above = (up[0], up[1], up[2], max(up[1] + 1, fld.bbox[1] - 1))
+        return ink_share(overview, width, height, (right[0] + 2, right[1], right[2], right[3])) > 0.003 or \
+            ink_share(overview, width, height, above) > 0.003
+
     def checkbox_state(self, pdf_path: Path, fld: FormField, dpi: int) -> Optional[bool]:
         """Asks the vision model whether the checkbox left of a label is ticked (True / False / None = no checkbox)."""
         x0, y0, x1, y1 = fld.bbox
@@ -440,7 +456,8 @@ class FieldReader:
             labels = find_labels(page)
             if not form_like(page, labels, handwriting):
                 continue
-            if len(labels) < MIN_LABELS and not handwriting:
+            date_only = len(labels) < MIN_LABELS and not handwriting
+            if date_only:
                 labels = [label for label in labels if label.kind in (DATE, PLACE_DATE)]  # date / signature lines only
             dpi = min(NATIVE_MAX_DPI, max(300, native_dpi(pdf_path, page.page - 1) or 300))
             from fluxsense.llm.images import render_page
@@ -451,6 +468,8 @@ class FieldReader:
                     fld.ticked = self.checkbox_state(pdf_path, fld, dpi)
                 if fld.ticked is False:
                     continue  # an unticked option: its field is not filled
+                if date_only and not fld.inside and not self._ink_at_entry(fld, overview, width, height, labels):
+                    continue  # a date line alone triggers only with something written to its right or above it
                 if fld.inside:  # the item holds label and entry: its own box plus a right margin
                     x0, y0, x1, y1 = fld.bbox
                     h = max(6.0, y1 - y0)

@@ -273,10 +273,20 @@ each printed label is read on its own:
   extraction and a `fieldread` text source for grounding; a value equal to
   a reading has provenance `label`, but a handwritten reading alone is
   never auto-accepted ("handwritten form field (single reading)"): it needs
-  an independent second reading with the same value in another text source
-  of the page (native text, OCR / layout text) - the full-page extraction
-  saw the FORM FIELDS block and does not count - and, for dates, a single
-  reading.
+  an independent second reading with the same value printed in the page's
+  digital text layer - OCR-derived text (a scanner's invisible OCR layer,
+  OvisOCR3, Docling, ocrmypdf) and the full-page extraction (it saw the
+  FORM FIELDS block) do not count - and, for dates, a single reading.
+- A page whose embedded text is a scanner's OCR layer (mostly invisible
+  text, or a page-covering image in a file from an OCR tool) is a scan: its
+  text counts as OCR everywhere (field reading, the printed-IBAN rule of
+  §7, zoom exemptions).
+- Generic name labels (`Name`, `Name, Vorname`, `... des Mitglieds`, `...
+  des Zahlungsempfängers`, `... des Kontoinhabers`, `Kreditinstitut`) are
+  context only and never map to sender or recipient; only role labels do
+  (`Name des Wohnungsgebers`, `Aussteller`, `Antragsteller`). A label
+  repeated on one line is read once. Date / signature lines alone trigger
+  the reading only with ink at their entry.
 - Date readings include the `1` / `|` / `/` swaps of handwriting
   (`11/10/26` may be `1|10|26`), and for a dot transcription a day or month
   `11` or ending in `1` also reads as that digit before a separator

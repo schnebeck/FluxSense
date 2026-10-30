@@ -303,16 +303,16 @@ def test_ambiguous_handwritten_date_is_flagged_not_accepted(settings: Any, tmp_p
     assert not ev.auto_accepted
 
 
-def test_single_reading_is_never_auto_accepted_but_agreement_may_be(settings: Any, tmp_path: Path) -> None:
+def test_single_reading_is_never_auto_accepted_ocr_agreement_is_not_enough(settings: Any, tmp_path: Path) -> None:
     """A handwritten value read only from its crop is flagged 'single reading'; the floor 'DG' that the OCR text also
-    reads is an independent second reading and may be accepted; the name+address block is split."""
+    reads is still flagged (OCR is no independent confirmation of handwriting); the name+address block is split."""
     result, facts, _ = _checkbox_run(tmp_path, settings, "3.2.24", ("3.2.24", "2024-02-03"))
     ld = result.logical_documents[0]
     by_path = {e.path: e for e in ld.evidence}
     name = by_path["meta_header.sender.name"]
     assert not name.auto_accepted and "handwritten form field (single reading)" in name.review_reasons
     floor = by_path["bodies.legal_body.subject_address.location_detail"]
-    assert "handwritten form field (single reading)" not in floor.review_reasons and floor.auto_accepted
+    assert "handwritten form field (single reading)" in floor.review_reasons and not floor.auto_accepted
     sender = ld.fields["meta_header"]["sender"]
     landlord = facts["landlord"]
     assert sender["name"] == landlord.name and sender["zip_code"] == landlord.address.zip_code
@@ -327,7 +327,8 @@ def test_name_with_street_only_is_not_mapped_to_street() -> None:
 
 def test_signature_page_with_date_lines_only_is_read(settings: Any, tmp_path: Path) -> None:
     """A scanned contract signature page with only '<Ort>, den 7/8/24' (OCR: '71804') and an empty 'Ort, den': the date
-    lines alone trigger the field reading; the reading replaces the full-page misreading and stays flagged."""
+    lines alone trigger the field reading, but only the one with ink at its entry is read; the reading replaces the
+    full-page misreading and stays flagged."""
     from datetime import date as day
     from fluxsense.testdata import build_contract
     doc = build_contract(random.Random("signature-page"), day(2024, 10, 1), day(2024, 8, 7), signature_text="7/8/24", rent=False)
@@ -359,7 +360,7 @@ def test_signature_page_with_date_lines_only_is_read(settings: Any, tmp_path: Pa
     settings.extract.engine = "ovisocr3"
     ld = Analyzer(settings, backend=FakeBackend(handler)).analyze(pdf).logical_documents[0]
     labels = sorted(r.prompt.split('field is: "')[1].split('"')[0] for r in seen)
-    assert len(labels) == 2 and all(label.endswith(", den") for label in labels)
+    assert len(labels) == 1 and labels[0].endswith(", den") and labels[0] != "Ort, den"  # the empty line has no ink: not read
     assert ld.fields["meta_header"]["doc_date"] == "2024-08-07"
     ev = next(e for e in ld.evidence if e.path == "meta_header.doc_date")
     assert not ev.auto_accepted and "handwritten form field (single reading)" in ev.review_reasons
@@ -450,3 +451,70 @@ def test_numbered_persons_reach_certified_persons_and_recipient() -> None:
     assert doc["bodies"]["legal_body"]["certified_persons"] == list(persons)
     assert doc["meta_header"]["recipient"]["name"] == persons[0]
     assert any(e.path == "meta_header.recipient.name" and e.matched_source == SOURCE_FIELDREAD for e in evidence)
+
+
+def _ocr_sandwich(page: Page, hidden: str, target: Path) -> Path:
+    """A scanned page (image only) with a scanner's invisible OCR layer carrying a (mis)reading."""
+    scan = _scan(page, target.with_suffix(".scan.pdf"))
+    with pymupdf.open(scan) as doc:
+        doc[0].insert_text((LEFT, 300), hidden, fontsize=11, render_mode=3)
+        doc.save(target)
+    return target
+
+
+def test_scanner_ocr_layer_is_no_independent_confirmation(settings: Any, tmp_path: Path) -> None:
+    """A scan whose invisible OCR layer has the same misread name as the field reading: the layer is recognised as OCR,
+    the name is not auto-accepted; on a digital page the printed name that equals the reading may be accepted."""
+    from fluxsense.extract.native import read_pages
+    from fluxsense.extract.base import TextLayer
+    from fluxsense.grounding.acceptance import assess
+    from fluxsense.models.result import FieldEvidence, GroundingStatus
+    page, _ = _form(random.Random("ocr-layer"), "7/8/26")
+    misread = "Egrida Probe"
+    pdf = _ocr_sandwich(page, f"Name: {misread}", tmp_path / "sandwich.pdf")
+    scanned = read_pages(pdf, "native")[0]
+    assert scanned.native_ocr and misread in scanned.sources["native"]
+    digital = read_pages(render([page], tmp_path / "digital.pdf"), "native")[0]
+    assert not digital.native_ocr
+    for page_text, accepted in ((scanned, False), (digital, True)):
+        name = misread if not accepted else next(r.text for r in page.runs if r.hand and " " in r.text)
+        page_text.sources["fieldread"] = f"Name des Wohnungsgebers: {name}"
+        if accepted:
+            page_text.sources["native"] += f"\nName des Wohnungsgebers: {name}"
+        fields = {"meta_header": {"sender": {"name": name}}}
+        evidence = [FieldEvidence(path="meta_header.sender.name", kind="text", value=name, page=1,
+                                  status=GroundingStatus.GROUNDED, matched_source="native")]
+        assess(fields, evidence, TextLayer(pages=[page_text], engine="t"), [1], "CERTIFICATE", [])
+        single = "handwritten form field (single reading)" in evidence[0].review_reasons
+        assert single is (not accepted), (accepted, evidence[0].review_reasons)
+
+
+def test_printed_invalid_iban_needs_digital_text(tmp_path: Path) -> None:
+    """F48: an invalid IBAN found only in a scanner's OCR layer is no proof of what is printed."""
+    from fluxsense.extract.base import PageText as PT, TextLayer
+    from fluxsense.grounding.harness import printed_as_is
+    from fluxsense.models.result import FieldEvidence
+    iban = "DE44990123450532013001"
+    ev = FieldEvidence(path="bodies.finance_body.payment_accounts.0.iban", kind="iban", value=iban, page=1)
+    layer = TextLayer(pages=[PT(page=1, sources={"native": f"IBAN {iban}"}, native_ocr=True)], engine="t")
+    assert not printed_as_is(layer, [1], ev)
+    layer.pages[0].native_ocr = False
+    assert printed_as_is(layer, [1], ev)
+
+
+def test_generic_name_labels_never_map_to_parties_and_repeated_labels_are_read_once() -> None:
+    """'Name, Vorname des Mitglieds', 'Name/Vorname des Zahlungsempfängers', 'Name Kreditinstitut' are context only (no
+    target, marked in the FORM FIELDS block); 'Name des Antragstellers' maps to the sender; 'Tel.:' twice on one line is
+    one field."""
+    from fluxsense.extract.fieldread import classify_label, FormField, NAME
+    for label in ("Name, Vorname des Mitglieds", "Name/Vorname des Zahlungsempfängers", "Name Kreditinstitut",
+                  "Name, Vorname des Kontoinhabers"):
+        rule = classify_label(label)
+        assert rule is not None and rule.target is None, label
+    assert classify_label("Name des Antragstellers").target == "sender.name"
+    line = FormField(1, "Name, Vorname des Mitglieds", NAME, None, (0, 0, 1, 1), entry="Probe, Max", value="Probe, Max").line()
+    assert "not by itself the sender or recipient" in line
+    words = [Word(62, 100, 80, 110, "Tel.:"), Word(300, 100, 318, 110, "Tel.:"), Word(62, 140, 100, 150, "Name:"),
+             Word(62, 180, 120, 190, "Anschrift:")]
+    labels = [f.label for f in find_labels(PageText(page=1, words=words))]
+    assert labels.count("Tel.:") == 1

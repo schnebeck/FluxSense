@@ -20,7 +20,7 @@ Description:    Hallucination guard. Grounds every extracted value against
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from fluxsense.catalog.contract import contract_for, derived_period_value
 from fluxsense.catalog.registry import TableSpec, TypeSpec
@@ -133,9 +133,11 @@ def parse_printed(kind: str, printed: Optional[str]) -> Optional[Any]:
     return printed.strip()
 
 
-def natively_grounded(ev: FieldEvidence) -> bool:
-    """True if the value was found exactly in the native PDF text layer (what is printed, no OCR involved)."""
-    return ev.status == GroundingStatus.GROUNDED and ev.matched_source == "native"
+def natively_grounded(ev: FieldEvidence, ocr_pages: Optional[Set[int]] = None) -> bool:
+    """True if the value was found exactly in the native PDF text layer (what is printed, no OCR involved); a page whose
+    native text is a scanner's OCR layer does not count."""
+    return ev.status == GroundingStatus.GROUNDED and ev.matched_source == "native" and \
+        (ev.matched_page or ev.page) not in (ocr_pages or set())
 
 
 def label_for(path: str) -> str:
@@ -196,8 +198,9 @@ CHECK_IBAN_PRINTED_INVALID = "grounding.iban_printed_invalid"
 def printed_as_is(layer: TextLayer, pages: List[int], ev: FieldEvidence) -> bool:
     """
     True if an (invalid) IBAN is printed exactly so: character for character
-    in the native text layer, or confirmed as printed on the zoom crop (OCR
-    alone is no proof: OCR and VLM can share a misreading). Masked IBANs never.
+    in the native (digital) text layer, or confirmed as printed on the zoom
+    crop (OCR - also a scanner's invisible OCR layer - is no proof: OCR and
+    VLM can share a misreading). Masked IBANs never.
     """
     value = normalize_iban(str(ev.value or ""))
     if len(value) < 15 or re.search(r"[X*]", value[4:]):
@@ -208,7 +211,7 @@ def printed_as_is(layer: TextLayer, pages: List[int], ev: FieldEvidence) -> bool
         return True
     for number in pages:
         page = layer.page(number)
-        native = page.sources.get("native", "") if page else ""
+        native = page.sources.get("native", "") if page and not page.native_ocr else ""
         if value in compact(native.upper()):
             return True
     return False
@@ -439,6 +442,7 @@ class GroundingHarness:
             settings: Settings.
         """
         self.backend = backend
+        self._ocr_pages: Set[int] = set()
         self.settings = settings
         self.zoomer = Zoomer(backend, settings)
 
@@ -510,7 +514,7 @@ class GroundingHarness:
         cfg = self.settings.grounding
         ungrounded = [e for e in evidence if e.critical and e.status == GroundingStatus.UNGROUNDED]
         in_failed = [e for e in evidence if e not in ungrounded and any(e.path.startswith(f) or f.startswith(e.path) for f in failed_fields)
-                     and e.kind in CHECKED_KINDS and not natively_grounded(e)]
+                     and e.kind in CHECKED_KINDS and not natively_grounded(e, self._ocr_pages)]
         weak = [e for e in evidence if cfg.verify_weak_critical and e.critical and e.status == GroundingStatus.WEAKLY_GROUNDED
                 and e not in in_failed]
         ordered: List[FieldEvidence] = []
@@ -577,8 +581,10 @@ class GroundingHarness:
         cfg = self.settings.grounding
         self.ground(layer, pages, evidence, specs)
         snaps = snap_ibans(layer, pages, fields, evidence, specs) + snap_ungrounded(layer, pages, fields, evidence)
-        scan_pages = {p for p in pages if layer.page(p) and len(layer.page(p).sources.get("native", "").strip()) < 50}
+        scan_pages = {p for p in pages if layer.page(p) and (len(layer.page(p).sources.get("native", "").strip()) < 50
+                                                            or layer.page(p).native_ocr)}
         checks = self.ground_tables(layer, pages, tables, specs) + complete_capped_values(layer, pages, fields, evidence)
+        self._ocr_pages = {p for p in pages if layer.page(p) is not None and layer.page(p).native_ocr}
         candidates = self._candidates(evidence, failed_fields) if cfg.enabled else []
         scan_names = [e for e in evidence if is_party_field(e) and e.path.split(".")[-1] in PARTY_NAME_FIELDS
                       and e.status == GroundingStatus.UNGROUNDED and scan_pages and cfg.enabled][:3]

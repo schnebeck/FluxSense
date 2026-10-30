@@ -65,6 +65,7 @@ class PageText:
     tables: List[PageTable] = field(default_factory=list)
     items: List[Any] = field(default_factory=list)  # layout.items.LayoutItem in reading order
     blocks: List[Tuple[float, float, float, float, str]] = field(default_factory=list)
+    native_ocr: bool = False  # the 'native' text is a scanner's OCR layer over a page image, not printed digital text
 
     def best_source(self) -> Optional[str]:
         """Name of the source best_text() returns (None if the page has no text)."""

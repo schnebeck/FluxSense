@@ -13,8 +13,9 @@ Description:    Native text layer: font-based text-layer detection (pikepdf
 ------------------------------------------------------------------------------
 """
 
+import re
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pymupdf as fitz
 import pikepdf
@@ -93,6 +94,29 @@ def detect_tables(page: fitz.Page, page_no: int, source: str, words: Optional[Li
     return tables
 
 
+OCR_PRODUCER_RE = re.compile(r"(abbyy|finereader|omnipage|paper\s*capture|ocrmypdf|tesseract|scansnap|readiris|kofax|"
+                             r"nuance|naps2|clearscan|ocr)", re.IGNORECASE)
+
+
+def scanned_text_layer(page: Any, metadata: Dict[str, Any]) -> bool:
+    """
+    True if a page's text is a scanner's OCR layer: mostly invisible text
+    (render mode 3, a 'sandwich' PDF), or a page-covering image under the
+    text in a file produced by an OCR tool.
+    """
+    total = invisible = 0
+    for span in page.get_texttrace():
+        count = len(span.get("chars") or ())
+        total += count
+        invisible += count if span.get("type") == 3 else 0
+    if total and invisible / total >= 0.5:
+        return True
+    area = abs(page.rect) or 1.0
+    covered = max((abs(page.rect & fitz.Rect(info["bbox"])) / area for info in page.get_image_info()), default=0.0)
+    producer = f"{metadata.get('producer') or ''} {metadata.get('creator') or ''}"
+    return covered >= 0.85 and bool(OCR_PRODUCER_RE.search(producer))
+
+
 def read_pages(pdf_path: Path, source: str, with_tables: bool = True) -> List[PageText]:
     """
     Reads text, words and tables of every page.
@@ -113,7 +137,8 @@ def read_pages(pdf_path: Path, source: str, with_tables: bool = True) -> List[Pa
             words = [Word(w[0], w[1], w[2], w[3], w[4]) for w in page.get_text("words")]
             entry = PageText(page=index + 1, width=page.rect.width, height=page.rect.height,
                              sources={source: text}, words=words, words_source=source,
-                             blocks=[(b[0], b[1], b[2], b[3], b[4]) for b in page.get_text("blocks", sort=True) if b[6] == 0])
+                             blocks=[(b[0], b[1], b[2], b[3], b[4]) for b in page.get_text("blocks", sort=True) if b[6] == 0],
+                             native_ocr=bool(text.strip()) and scanned_text_layer(page, doc.metadata or {}))
             if with_tables and text.strip():
                 entry.tables = detect_tables(page, index + 1, source, words)
             pages.append(entry)
