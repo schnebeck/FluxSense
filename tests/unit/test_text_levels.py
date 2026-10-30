@@ -120,6 +120,10 @@ def test_dictionary_corrections_need_a_unique_ocr_explained_candidate() -> None:
     assert pairs == {("Ubersicht", "Übersicht"), ("Besteliung", "Bestellung"), ("Zahlungsfrlst", "Zahlungsfrist")}
     assert all(text[c.offset:c.offset + len(c.before)] == c.before for c in out)  # type: ignore[operator]
     assert ocr_explained("Kundennurnmer", "Kundennummer") and not ocr_explained("Rechnnug", "Rechnung")
+    # a surname read the same way twice is printed so; short words stay as read
+    text = "Kanzlei Weitz, Ihr Ansprechpartner: Herr Dr. Weitz. Siehe unte."
+    out = word_corrections(1, text, _lookup(["Kanzlei", "Ansprechpartner", "Siehe"], {"Weitz": ["Weilz"], "unte": ["unto"]}))
+    assert out == []
 
 
 def test_ispell_output_and_a_missing_dictionary() -> None:
@@ -354,7 +358,8 @@ def test_digital_pages_get_no_second_text_layer(tmp_path: Path) -> None:
 def test_pipeline_text_levels_and_format_hint(settings: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """include_page_text: every page has raw / clean / corrected; a per-call format for doc_number repairs the
     OCR's letter at a digit position (confirmed by the re-read) in the field and in the text; the sender's name is never
-    spell-corrected."""
+    spell-corrected (dictionary correction switched on; it is off by default)."""
+    settings.text.spell_check = True
     sender = person(random.Random("pipe-sender"))
     image, ocr = Page(), Page()
     for model, number, word in ((image, "KD-123456", "Bestellung"), (ocr, "KD-12345G", "Besteliung")):

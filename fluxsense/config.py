@@ -192,8 +192,9 @@ class IdentitySettings(BaseModel):
 class TextSettings(BaseModel):
     """Text levels and evidence-based corrections (raw / clean / corrected)."""
 
-    spell_check: bool = Field(True, description="Dictionary correction of OCR words (hunspell dictionaries through the "
-                                                "'hunspell' or 'enchant-2' command; skipped when none is installed)")
+    spell_check: bool = Field(False, description="Dictionary correction of OCR words in the corrected text level (hunspell "
+                                                 "dictionaries through the 'hunspell' or 'enchant-2' command; skipped when "
+                                                 "none is installed). Off by default until measured on real scans")
     spell_languages: List[str] = Field(default_factory=lambda: ["de_DE", "en_US"])
     format_reread: bool = Field(True, description="Fixed-format fields (IBAN, BIC, VAT ID, ...) that fail their check and "
                                                   "arithmetic mismatches are re-read on a native-resolution crop")

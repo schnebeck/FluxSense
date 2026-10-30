@@ -12,7 +12,10 @@ Description:    Evidence-based corrections after the plausibility checks -
                 replaces an unknown one only as the unique candidate at edit
                 distance <= 2 that typical OCR confusions explain ('rn' /
                 'm', 'li' / 'll', 'U' / 'Ü'); names, company names, ALL-CAPS,
-                tokens with digits, e-mails and URLs are never touched.
+                tokens with digits, e-mails and URLs, words under five
+                letters and words read the same way more than once in the
+                document (a consistent reading is printed so: surnames) are never
+                touched. Off by default (text.spell_check).
                 Fixed formats: a character that violates its position class
                 (a letter at a digit position) is replaced when exactly one
                 candidate passes the checksum. Values that fail a check
@@ -32,6 +35,7 @@ Description:    Evidence-based corrections after the plausibility checks -
 import copy
 import difflib
 import re
+from collections import Counter
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -65,7 +69,7 @@ OCR_WORD_PAIRS: FrozenSet[Tuple[str, str]] = frozenset(
                       ("u", "ü"), ("a", "ä"), ("o", "ö"), ("U", "Ü"), ("A", "Ä"), ("O", "Ö"), ("B", "ß"), ("li", "ll"),
                       ("il", "ll"), ("e", "o"), ("fi", "fl"))
     for pair in ((a, b), (b, a)))
-_WORD_RE = re.compile(r"(?<![\w@/.\-])([A-Za-zÄÖÜäöüß]{4,})(?![\w@\-])")
+_WORD_RE = re.compile(r"(?<![\w@/.\-])([A-Za-zÄÖÜäöüß]{5,})(?![\w@\-])")
 _SKIP_SPAN_RE = re.compile(r"\S+@\S+|(?:https?://|www\.)\S+|\S+\.(?:de|com|org|net|eu|at|ch)\b\S*", re.IGNORECASE)
 _TITLE_RE = re.compile(r"\b(?:Herrn?|Frau|Dr\.|Prof\.|Familie|Firma|Eheleute)\s+([A-ZÄÖÜ][\w-]*)(?:\s+([A-ZÄÖÜ][\w-]*))?")
 # Fixed formats corrected inside the page text: the IBAN anywhere, the others only after their label on the line.
@@ -99,11 +103,18 @@ def protected_words(texts: Iterable[str]) -> Set[str]:
     return words
 
 
+def repeated_words(texts: Iterable[str]) -> Set[str]:
+    """Words read the same way more than once in a document (a consistent reading is printed so: surnames, firm names)."""
+    seen = Counter(m.group(1) for text in texts for m in _WORD_RE.finditer(text or ""))
+    return {word for word, count in seen.items() if count > 1}
+
+
 def word_corrections(page: int, text: str, lookup: Callable[[Sequence[str]], Dict[str, Optional[List[str]]]],
                      protected: Optional[Set[str]] = None) -> List[TextCorrection]:
     """
     Dictionary corrections of one OCR page text: unknown words with exactly
-    one dictionary suggestion that OCR confusions explain.
+    one dictionary suggestion that OCR confusions explain. Words under five
+    letters and words that occur more than once in the same form are kept.
 
     Args:
         page: Page number.
@@ -117,10 +128,12 @@ def word_corrections(page: int, text: str, lookup: Callable[[Sequence[str]], Dic
     protected = protected or set()
     skip = [m.span() for m in _SKIP_SPAN_RE.finditer(text)]
     titled = {w for m in _TITLE_RE.finditer(text) for w in m.groups() if w}
+    repeated = repeated_words([text])
     tokens: List[Tuple[int, str]] = []
     for match in _WORD_RE.finditer(text):
         word = match.group(1)
-        if word.isupper() or word in protected or word in titled or any(s <= match.start() < e for s, e in skip):
+        if word.isupper() or word in protected or word in titled or word in repeated \
+                or any(s <= match.start() < e for s, e in skip):
             continue
         tokens.append((match.start(), word))
     if not tokens:

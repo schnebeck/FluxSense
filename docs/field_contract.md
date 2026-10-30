@@ -445,13 +445,15 @@ stored.
 
 After the plausibility checks, on scanned pages only:
 
-- Words: a dictionary word (hunspell dictionaries `text.spell_languages`
-  through `hunspell` / `enchant-2`; skipped when none is installed)
+- Words (off by default, `text.spell_check`): a dictionary word (hunspell
+  dictionaries `text.spell_languages` through `hunspell` / `enchant-2`;
+  skipped when none is installed)
   replaces an unknown word only as the unique suggestion within edit
   distance 2 whose differences are typical OCR confusions (`rn/m`,
   `li/ll`, `l/i`, `U/Ü`, ...). Names (parties, persons, signers, form name
   entries, words after `Herrn` / `Frau` / `Dr.`), company names, ALL-CAPS,
-  tokens next to digits, e-mails and URLs are never touched.
+  tokens next to digits, e-mails and URLs, words under five letters and
+  words read the same way more than once in the document are never touched.
 - Fixed formats: a character at a wrong position class is replaced when
   exactly one candidate passes the check. Digit / digit confusions and
   arithmetic mismatches (quantity x unit price != line total, net + tax !=

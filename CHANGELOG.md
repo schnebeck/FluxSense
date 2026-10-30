@@ -15,7 +15,9 @@
   (`AnalyzeOptions.formats`).
 - Evidence-based correction after the plausibility checks: unique
   OCR-explained dictionary words (hunspell via `hunspell` / `enchant-2`,
-  skipped when not installed; `text.spell_check`), forced repairs of fixed
+  skipped when not installed; `text.spell_check`, off by default - names
+  read the same way twice in a document and words under five letters are
+  never touched), forced repairs of fixed
   formats by position class + checksum, and native-resolution crop re-reads
   without the old value for digit confusions and arithmetic mismatches
   (`text.format_reread`); confirmed printed errors are flagged as document

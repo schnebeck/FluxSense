@@ -20,7 +20,7 @@ from typing import Any, List, Optional, Sequence
 from fluxsense.config import Settings
 from fluxsense.extract.base import TextLayer
 from fluxsense.models.result import PageTextOut
-from fluxsense.text.correct import confirm_field, confirm_text, protected_words
+from fluxsense.text.correct import confirm_field, confirm_text, protected_words, repeated_words
 from fluxsense.text.levels import clean_text, page_levels
 from fluxsense.text.render import render_text_layer
 
@@ -62,4 +62,6 @@ def text_pages(layer: TextLayer, settings: Settings, result: Optional[Any] = Non
         dictionary = Dictionary.system(settings.text.spell_languages)
         lookup = dictionary.lookup if dictionary.available else None
     protected = protected_words(_names(result)) if result is not None else set()
+    if lookup is not None:
+        protected |= repeated_words(page.best_text() for page in layer.pages)
     return [page_levels(page, lookup, protected, formats) for page in layer.pages]
