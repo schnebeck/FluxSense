@@ -104,6 +104,8 @@ def _vision(facts: Dict[str, Any], signing: str, seen: List[LLMRequest]) -> Any:
                "Folgende Person(en) ist/sind eingezogen:": (facts["mover"], None)}
 
     def read(request: LLMRequest) -> Optional[Any]:
+        if request.label.startswith("Fieldread checkbox"):
+            return {"state": "no checkbox"}
         seen.append(request)
         label = request.prompt.split('The printed label of the field is: "')[1].split('"')[0]
         if label.endswith(", den"):
@@ -137,7 +139,7 @@ def test_date_candidates() -> None:
     """Bars may be separators or ones; slashes and dots are separators; future and invalid readings are dropped."""
     assert date_candidates("7/8/26", "2026-08-07", date(2026, 10, 30)) == ["2026-08-07"]
     assert set(date_candidates("1|10|26", "2026-10-01", date(2026, 10, 30))) == {"2026-10-01", "2026-10-11"}
-    assert date_candidates("31.02.24", None, date(2026, 10, 30)) == []
+    assert date_candidates("32.02.24", None, date(2026, 10, 30)) == []
 
 
 def _pipeline(tmp_path: Path, signing: str, settings: Any, stage2_doc_date: str) -> Tuple[Any, Dict[str, Any], List[LLMRequest]]:
@@ -254,6 +256,8 @@ def _checkbox_run(tmp_path: Path, settings: Any, move_in: str, answer_in: Tuple[
     def handler(request: LLMRequest) -> Optional[Any]:
         if request.label.startswith("OCR ovisocr3"):
             return _checkbox_items(page)
+        if request.label.startswith("Fieldread checkbox"):
+            return {"state": "no checkbox"}
         if request.label.startswith("Fieldread"):
             seen.append(request)
             label = request.prompt.split('The printed label of the field is: "')[1].split('"')[0]
@@ -359,3 +363,90 @@ def test_signature_page_with_date_lines_only_is_read(settings: Any, tmp_path: Pa
     assert ld.fields["meta_header"]["doc_date"] == "2024-08-07"
     ev = next(e for e in ld.evidence if e.path == "meta_header.doc_date")
     assert not ev.auto_accepted and "handwritten form field (single reading)" in ev.review_reasons
+
+
+def _layer_with(page: Page, items: List[Dict[str, Any]], tmp_path: Path, settings: Any, name: str) -> Tuple[Path, Any]:
+    pdf = _scan(page, tmp_path / f"{name}.pdf")
+    return pdf, build_text_layer(pdf, settings, "ovisocr3", backend=FakeBackend(lambda r: items))
+
+
+def _item(page: Page, text: str, x0: float, y: float, x1: float, size: float = 10) -> Dict[str, Any]:
+    return {"bbox": [round(x0 / page.width * 1000), round((y - size) / page.height * 1000), round(x1 / page.width * 1000),
+                     round((y + 2) / page.height * 1000)], "category": "text", "content": text}
+
+
+def test_label_item_containing_its_entry(settings: Any, tmp_path: Path) -> None:
+    """'Musterstadt, den 71806' as ONE layout item: the crop covers the item (the entry is inside), the prompt names
+    only the label, and an EMPTY answer is no reading (no disagreement)."""
+    from fluxsense.extract.fieldread import map_fields
+    page = Page()
+    page.text(LEFT, 400, "Musterstadt, den", 10)
+    page.text(LEFT + 90, 400, "7/8/24", 12, hand=True)
+    for y, label in ((440, "Ort, Datum"), (480, "Datum:")):
+        page.text(LEFT, y, label, 10)
+    items = [_item(page, "Musterstadt, den 71806", LEFT, 400, LEFT + 140), _item(page, "Ort, Datum", LEFT, 440, LEFT + 50),
+             _item(page, "Datum:", LEFT, 480, LEFT + 30)]
+    pdf, layer = _layer_with(page, items, tmp_path, settings, "merged")
+    seen: List[LLMRequest] = []
+    fields = FieldReader(FakeBackend(lambda r: seen.append(r) or {"entry": EMPTY}), settings).run(pdf, layer.pages)
+    merged = next(f for f in fields if f.label == "Musterstadt, den")
+    assert merged.inside and merged.region[0] <= LEFT and merged.region[2] >= LEFT + 140
+    prompt = next(r.prompt for r in seen if '"Musterstadt, den"' in r.prompt)
+    assert "71806" not in prompt and merged.entry is None
+    meta = {"meta_header": {"doc_date": "2018-06-07"}, "bodies": {}}
+    _, checks = map_fields(meta, [], fields)
+    assert not [c for c in checks if c.check_id == CHECK_DISAGREE and "Musterstadt" in c.message]
+
+
+def test_checkbox_glyphs_and_checkbox_question(settings: Any, tmp_path: Path) -> None:
+    """'□ Auszug am' is unticked and never read; 'Einzug am' without a glyph gets the checkbox question - 'yes' reads it
+    as MOVE_IN, 'no' skips it."""
+    from fluxsense.extract.fieldread import map_fields
+    page = Page()
+    page.text(LEFT + 14, 120, "Einzug am", 10)
+    page.text(LEFT + 120, 120, "3.2.24", 12, hand=True)
+    page.text(LEFT + 14, 140, "Auszug am", 10)
+    page.text(LEFT, 180, "Telefon:", 10)
+    items = [_item(page, "Einzug am", LEFT + 14, 120, LEFT + 70), _item(page, "□ Auszug am", LEFT, 140, LEFT + 70),
+             _item(page, "Telefon:", LEFT, 180, LEFT + 40)]
+    pdf, layer = _layer_with(page, items, tmp_path, settings, "boxes")
+    for state, read in (("yes", True), ("no", False)):
+        seen: List[str] = []
+
+        def answer(request: LLMRequest, state: str = state) -> Any:
+            seen.append(request.label)
+            if request.label.startswith("Fieldread checkbox"):
+                return {"state": state}
+            return {"entry": "3.2.24", "iso": "2024-02-03"}
+
+        fields = FieldReader(FakeBackend(answer), settings).run(pdf, layer.pages)
+        labels = [label for label in seen if not label.startswith("Fieldread checkbox")]
+        assert not any("Auszug" in label for label in seen)
+        assert any("Einzug" in label for label in labels) is read
+        doc = {"meta_header": {}, "bodies": {"legal_body": {}}}
+        map_fields(doc, [], fields)
+        assert (doc["bodies"]["legal_body"].get("certified_event") == "MOVE_IN") is read
+
+
+def test_dot_transcribed_bar_date_keeps_its_ambiguity() -> None:
+    """The reader transcribes '1|10|26' as '11.10.26': the '1' + separator reading is added, so both dates remain."""
+    assert set(date_candidates("11.10.26", "2026-10-11", date(2026, 10, 30))) == {"2026-10-11", "2026-10-01"}
+    assert date_candidates("07.08.2026", None, date(2026, 10, 30)) == ["2026-08-07"]
+
+
+def test_numbered_persons_reach_certified_persons_and_recipient() -> None:
+    """'für folgende Person(en)' with numbered lines: one person per line (empty numbers dropped) into
+    certified_persons, and the first person becomes the recipient of a move confirmation; never auto-accepted alone."""
+    from fluxsense.extract.fieldread import FormField, PERSONS, DATE, map_fields, parse_persons
+    persons = person(random.Random("p1")).name, person(random.Random("p2")).name
+    entry = f"1. {persons[0]}\n2. {persons[1]}\n3."
+    assert parse_persons(entry) == list(persons)
+    form = [FormField(1, "für folgende Person(en)", PERSONS, "certified_persons", (62, 300, 200, 310), entry=entry, value=entry),
+            FormField(1, "Einzug am", DATE, "event.MOVE_IN", (62, 120, 120, 130), entry="3.2.24", value="2024-02-03",
+                      candidates=["2024-02-03"], ticked=True)]
+    doc: Dict[str, Any] = {"meta_header": {}, "bodies": {}}
+    evidence: List[Any] = []
+    map_fields(doc, evidence, form)
+    assert doc["bodies"]["legal_body"]["certified_persons"] == list(persons)
+    assert doc["meta_header"]["recipient"]["name"] == persons[0]
+    assert any(e.path == "meta_header.recipient.name" and e.matched_source == SOURCE_FIELDREAD for e in evidence)

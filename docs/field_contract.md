@@ -253,8 +253,18 @@ each printed label is read on its own:
   a header label (`... lauten:`) looks down to the next label below. An
   empty field is answered `EMPTY` and yields no value.
 - A checkbox before the label decides: an unticked option is not read, the
-  ticked one gives the certified event (`Einzug am` -> MOVE_IN); an unknown
-  tick state is flagged (`fieldread.checkbox_unknown`).
+  ticked one gives the certified event (`Einzug am` -> MOVE_IN). Box glyphs
+  (`□ ☐ ❑` / `☒ ☑ ✓ ✗`, `[ ]` / `[x]`) are normalised, also as an item of
+  their own left of the label; without a glyph the vision model is asked
+  about the box left of the label; an unknown state is flagged
+  (`fieldread.checkbox_unknown`).
+- A layout item that already holds the entry after its label
+  (`Musterstadt, den 71806`) is cropped as a whole and asked with the label
+  only; an EMPTY answer for it counts as not read.
+- Persons on numbered lines (`1.`, `2.`) under or beside `für folgende
+  Person(en)` become one person each (empty numbers dropped):
+  certified_persons, and the first person is the recipient of a move
+  confirmation.
 - Dates are normalised to ISO. When separators and digits can be confused
   (`1|10|26`: a bar is a separator or a one) every valid reading is kept;
   more than one reading flags the field (`fieldread.ambiguous`, naming the
@@ -268,7 +278,9 @@ each printed label is read on its own:
   saw the FORM FIELDS block and does not count - and, for dates, a single
   reading.
 - Date readings include the `1` / `|` / `/` swaps of handwriting
-  (`11/10/26` may be `1|10|26`); a name + address block is split into name
+  (`11/10/26` may be `1|10|26`), and for a dot transcription a day or month
+  `11` or ending in `1` also reads as that digit before a separator
+  (`11.10.26` may be `1.10.26`); a name + address block is split into name
   and address parts (a name never becomes a street) or left as context.
 - Unambiguous labels map directly: `Ort, Datum` / `..., den` -> doc_date,
   `Einzug am` / `Auszug am` -> certified_event and event_date, the persons

@@ -84,11 +84,14 @@ _BELOW_HINT_RE = re.compile(r"(lauten|lautet|folgende|:\s*$)", re.IGNORECASE)
 
 TYPE_HINTS: Dict[str, str] = {
     DATE: "The entry is a handwritten DATE in German notation day/month/year (separators may be '.', '/' or '|'; the year "
-          "may have 2 or 4 digits). Return it as written AND as ISO date, e.g. '7/8/26 -> 2026-08-07'.",
+          "may have 2 or 4 digits). Transcribe the separators exactly as they appear ('.', '/', '|' or '-'). Return it as "
+          "written AND as ISO date, e.g. '7/8/26 -> 2026-08-07'.",
     PLACE_DATE: "The entry is a PLACE and a handwritten DATE (day/month/year; separators may be '.', '/' or '|'; 2- or "
-                "4-digit year). Return it as written AND the date as ISO, e.g. 'Musterstadt, 7/8/26 -> 2026-08-07'.",
+                "4-digit year). Transcribe the separators exactly as they appear. Return it as written AND the date as "
+                "ISO, e.g. 'Musterstadt, 7/8/26 -> 2026-08-07'.",
     NAME: "The entry is the NAME of a person or organisation.",
-    PERSONS: "The entry lists one or more PERSONS (first and last name each); separate them with '; '.",
+    PERSONS: "The entry lists one or more PERSONS (first and last name each), often on numbered lines; return one person "
+             "per line without the numbers, skip empty lines.",
     ADDRESS: "The entry is a postal ADDRESS (street, house number, postcode, town).",
     LOCATION: "The entry is a LOCATION inside a building (floor and position, e.g. 'EG links', '2. OG rechts').",
     PHONE: "The entry is a PHONE number.",
@@ -99,6 +102,9 @@ PROMPT = ('This is a crop of a German form. The printed label of the field is: "
           'If the handwriting allows several readings, list every plausible ISO date in "candidates". '
           'Answer as JSON: {{"entry": "<the entry as written, or EMPTY>", "iso": "<ISO date or null>", '
           '"candidates": ["<ISO date>", ...]}}')
+CHECKBOX_SCHEMA: Dict[str, Any] = {"type": "object", "additionalProperties": False,
+                                   "properties": {"state": {"type": "string", "enum": ["yes", "no", "no checkbox"]}},
+                                   "required": ["state"]}
 SCHEMA: Dict[str, Any] = {"type": "object", "additionalProperties": False,
                           "properties": {"entry": {"type": "string", "maxLength": 200},
                                          "iso": {"type": ["string", "null"], "maxLength": 10},
@@ -121,6 +127,7 @@ class FormField:
     value: Optional[str] = None  # normalised value (ISO date for date kinds)
     candidates: List[str] = field(default_factory=list)
     ticked: Optional[bool] = None  # checkbox before the label: True ticked, False unticked, None no box / unknown
+    inside: bool = False  # the layout item already contains the entry after the label ('Musterstadt, den 71806')
 
     @property
     def empty(self) -> bool:
@@ -168,7 +175,9 @@ def find_labels(page: PageText) -> List[FormField]:
         from fluxsense.layout.din5008 import group_lines
         candidates = [(line.text, (line.x0, line.y0, line.x1, line.y1)) for line in group_lines(page.words)]
     fields: List[FormField] = []
+    boxes = [(normalize_checkbox(text).strip(), box) for text, box in candidates if _BOX_ONLY_RE.match(normalize_checkbox(text))]
     for text, box in candidates:
+        text = normalize_checkbox(text)
         rule = classify_label(text)
         if rule is None:
             continue
@@ -178,15 +187,40 @@ def find_labels(page: PageText) -> List[FormField]:
         if box_match:
             ticked = box_match.group(1) in TICKED
             label = label[box_match.end():].strip()
+        else:  # a box glyph as an item of its own, just left of the label on the same line
+            near = [b for b, bb in boxes if bb[2] <= box[0] + 2 and box[0] - bb[2] < 40
+                    and abs((bb[1] + bb[3]) / 2 - (box[1] + box[3]) / 2) < max(6.0, box[3] - box[1])]
+            if near:
+                ticked = near[-1] in TICKED
+        inside = False
         match = re.match(r"^(.*?(?::|\bam|\bden|\bvom|\bbis))\s+\S", label)
         if match and rule.kind in (DATE, PLACE_DATE, NAME, ADDRESS, LOCATION, PHONE) and len(match.group(1)) < len(label):
-            label = match.group(1).strip()
-        fields.append(FormField(page.page, label, rule.kind, rule.target, box, ticked=ticked))
+            label, inside = match.group(1).strip(), True  # the entry is inside the item, after the label
+        fields.append(FormField(page.page, label, rule.kind, rule.target, box, ticked=ticked, inside=inside))
     return fields
 
 
-TICKED = ("☒", "☑", "✓", "✔", "■", "[x]", "[X]", "(x)", "(X)", "x", "X")
-_CHECKBOX_RE = re.compile(r"^\s*(☒|☑|✓|✔|■|☐|□|\[x\]|\[X\]|\[ \]|\(x\)|\(X\)|\( \)|[xX](?=\s+[A-ZÄÖÜ]))\s*")
+_BOX_GLYPHS_UNTICKED = ("□", "☐", "❑", "❒", "◻", "▢")
+_BOX_GLYPHS_TICKED = ("☒", "☑", "✓", "✔", "✗", "✘", "■", "▣")
+
+
+def normalize_checkbox(text: str) -> str:
+    """Checkbox glyphs at the start of a label become '[ ]' / '[x]' ('□ Auszug am' -> '[ ] Auszug am')."""
+    stripped = text.lstrip()
+    for glyph in _BOX_GLYPHS_UNTICKED:
+        if stripped.startswith(glyph):
+            return "[ ] " + stripped[len(glyph):].lstrip()
+    for glyph in _BOX_GLYPHS_TICKED:
+        if stripped.startswith(glyph):
+            return "[x] " + stripped[len(glyph):].lstrip()
+    return text
+
+
+_BOX_ONLY_RE = re.compile(r"^\s*\[[ xX]\]\s*$")
+
+
+TICKED = ("[x]", "[X]", "(x)", "(X)", "x", "X")
+_CHECKBOX_RE = re.compile(r"^\s*(\[x\]|\[X\]|\[ \]|\(x\)|\(X\)|\( \)|[xX](?=\s+[A-ZÄÖÜ]))\s*")
 INLINE_END_RE = re.compile(r"(\bam|\bden|\bvom|\bbis|:)\s*$", re.IGNORECASE)
 
 
@@ -217,7 +251,7 @@ def entry_region(fld: FormField, width: float, height: float, below: bool, inlin
             right = min(right, min(same_line) - 2)
         return (x1, max(0.0, y0 - 0.6 * h), max(x1 + 10, right), min(height, y1 + 0.6 * h))
     if below:
-        left, right = max(0.0, x0 - 20), min(width, max(x1 + 0.45 * width, x0 + 0.85 * width))
+        left, right = max(0.0, x0 - 20), min(width, max(x1 + 0.45 * width, 0.9 * width))
         bottom = min(height, y1 + 6.5 * h)
         under = [o.bbox[1] for o in others if o is not fld and o.bbox[1] > y1 and overlaps_x(o, left, right)]
         if under:
@@ -302,6 +336,13 @@ def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional
     if match:
         day, sep1, month, sep2, year = match.groups()
         add(int(day), int(month), _expand_year(year))
+        if sep1 == sep2 == "." and not handwritten_seps:
+            # a handwritten '1|' is often transcribed as '11': a day / month '11' or ending in '1' may be the digit
+            # before a bar separator
+            if len(day) == 2 and (day == "11" or day.endswith("1")):
+                add(int(day[0]), int(month), _expand_year(year))
+            if len(month) == 2 and (month == "11" or month.endswith("1")):
+                add(int(day), int(month[0]), _expand_year(year))
         if sep1 == "|" and len(day) == 1:  # '1|10' may be '11.10' or '1.10': the bar is a stroke of a digit 1
             add(int(day + "1"), int(month), _expand_year(year))
         if sep2 == "|" and len(month) == 1:
@@ -335,6 +376,22 @@ class FieldReader:
             png = page.get_pixmap(dpi=dpi, clip=clip).tobytes("png")
         return fit_image(Image.open(io.BytesIO(png)).convert("RGB"), 1280)
 
+    def checkbox_state(self, pdf_path: Path, fld: FormField, dpi: int) -> Optional[bool]:
+        """Asks the vision model whether the checkbox left of a label is ticked (True / False / None = no checkbox)."""
+        x0, y0, x1, y1 = fld.bbox
+        h = max(6.0, y1 - y0)
+        probe = FormField(fld.page, fld.label, fld.kind, None, fld.bbox, region=(max(0.0, x0 - 1.8 * h), max(0.0, y0 - 0.4 * h),
+                                                                                    x0 + 0.3 * h, y1 + 0.4 * h))
+        image = self._crop(pdf_path, probe, dpi)
+        part = ImagePart(label="CHECKBOX", data_uri=encode_data_uri(image, "png"), width=image.width, height=image.height)
+        answer = self.backend.generate_json(LLMRequest(
+            prompt=f'This is a crop of a German form left of the printed label "{fld.label}". Is the checkbox ticked? '
+                   'Answer as JSON: {"state": "yes" | "no" | "no checkbox"}',
+            label=f"Fieldread checkbox p{fld.page} {fld.label[:30]}", model=self.settings.models.vision, images=[part],
+            schema=CHECKBOX_SCHEMA, schema_name="checkbox", max_tokens=30))
+        state = str((answer or {}).get("state") or "").lower() if isinstance(answer, dict) else ""
+        return True if state == "yes" else False if state == "no" else None
+
     def read(self, pdf_path: Path, fld: FormField, dpi: int) -> FormField:
         """Reads one field (typed prompt, crop only) and normalises the entry."""
         image = self._crop(pdf_path, fld, dpi)
@@ -347,6 +404,9 @@ class FieldReader:
         entry = str((answer or {}).get("entry") or "").strip() if isinstance(answer, dict) else ""
         iso = (answer or {}).get("iso") if isinstance(answer, dict) else None
         fld.entry = entry or EMPTY
+        if fld.empty and fld.inside:
+            fld.entry = None  # the layout shows something after the label: an EMPTY answer is no reading
+            return fld
         if fld.empty:
             return fld
         if fld.kind in (DATE, PLACE_DATE):
@@ -387,8 +447,16 @@ class FieldReader:
             overview = render_page(pdf_path, page.page - 1, dpi=100)
             width, height = page.width or 595.0, page.height or 842.0
             for fld in labels[:self.settings.pipeline.fieldread_max_fields]:
+                if fld.ticked is None and fld.target and fld.target.startswith("event."):
+                    fld.ticked = self.checkbox_state(pdf_path, fld, dpi)
                 if fld.ticked is False:
                     continue  # an unticked option: its field is not filled
+                if fld.inside:  # the item holds label and entry: its own box plus a right margin
+                    x0, y0, x1, y1 = fld.bbox
+                    h = max(6.0, y1 - y0)
+                    fld.region = (max(0.0, x0 - 5), max(0.0, y0 - 0.6 * h), min(width, x1 + 0.1 * width), min(height, y1 + 0.6 * h))
+                    jobs.append((fld, dpi))
+                    continue
                 rule = classify_label(fld.label)
                 below = bool(rule and (rule.below or _BELOW_HINT_RE.search(fld.label) and rule.kind in (ADDRESS, PERSONS)))
                 inline = False
@@ -426,6 +494,16 @@ def form_fields_block(page: PageText) -> str:
 _ADDRESS_RE = re.compile(r"^\s*(?P<street>.+?)\s+(?P<number>\d+\s?[a-zA-Z]?)\s*,\s*(?P<zip>\d{5})\s+(?P<city>.+?)\s*$")
 CHECK_DISAGREE = "fieldread.disagreement"
 CHECK_CHECKBOX = "fieldread.checkbox_unknown"
+
+
+def parse_persons(entry: str) -> List[str]:
+    """One person per line or ';' part; line numbers ('1.', '2)') and empty numbered lines are dropped."""
+    persons = []
+    for part in re.split(r"[;\n]", entry):
+        name = re.sub(r"^\s*\d{1,2}\s*[.)]\s*", "", part).strip(" ,.-_")
+        if name and not re.fullmatch(r"[\d\s.)_-]*", name):
+            persons.append(name)
+    return persons
 
 
 def split_name_address(entry: str) -> Tuple[Optional[str], Dict[str, str]]:
@@ -499,6 +577,8 @@ def map_fields(fields: Dict[str, Any], evidence: List[Any], form: Sequence[FormF
                                               f"('{fld.label}')"))
         notes.append(f"{path} = {value} from the field '{fld.label}'")
 
+    movement = any(f.target and f.target.startswith("event.") and f.ticked is not False and f.entry and not f.empty
+                   for f in form)
     for fld in form:
         if not fld.target or fld.entry is None:
             continue
@@ -519,11 +599,15 @@ def map_fields(fields: Dict[str, Any], evidence: List[Any], form: Sequence[FormF
                 checks.append(CheckResult(check_id=CHECK_CHECKBOX, rule="fieldread", status=CheckStatus.FAIL,
                                           severity=Severity.WARNING, field="bodies.legal_body.event_date",
                                           message=f"checkbox state of '{fld.label}' unknown - is this option ticked?"))
-        elif fld.target == "certified_persons" and legal is not None:
-            persons = [p.strip() for p in re.split(r"[;\n]", fld.entry) if p.strip()]
-            if persons and persons != legal.get("certified_persons"):
-                legal["certified_persons"] = persons
-                notes.append(f"certified_persons = {persons} from the field '{fld.label}'")
+        elif fld.target == "certified_persons":
+            persons = parse_persons(fld.entry)
+            if persons:
+                legal = bodies.setdefault("legal_body", {}) if legal is None else legal
+                if persons != legal.get("certified_persons"):
+                    legal["certified_persons"] = persons
+                    notes.append(f"certified_persons = {persons} from the field '{fld.label}'")
+                if movement and not (meta.get("recipient") or {}).get("name"):
+                    put("meta_header.recipient.name", persons[0], fld)  # a move confirmation is about the moving person
         elif fld.target == "sender.name":
             put("meta_header.sender.name", value, fld)
         elif fld.target == "sender.address":
