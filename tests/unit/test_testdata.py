@@ -132,7 +132,7 @@ def test_offline_stages_on_generated_documents(docset: Dict[str, Any]) -> None:
             type_name = doc["doc_types"][-1]
             pages = [p for p in layer.pages if p.page in doc["pages"]]
             lines = [line for p in pages for line in p.sources.get("native", "").splitlines()]
-            if doc["doc_date"] and type_name == "APPLICATION":
+            if doc["doc_date"] and (type_name == "APPLICATION" or generated.kind == "landlord_confirmation"):
                 assert contract.form_signature_dates(lines) == [doc["doc_date"]]
             elif doc["doc_date"] and type_name == "CONTRACT":
                 assert contract.date_line_dates(lines) == [doc["doc_date"]]
@@ -141,7 +141,8 @@ def test_offline_stages_on_generated_documents(docset: Dict[str, Any]) -> None:
                 assert hits and hits[0].value == doc["doc_date"], (entry["path"], [h.value for h in hits])
             if doc["doc_number"]:
                 assert contract.own_number_hits(type_name, lines)[0].value == doc["doc_number"], entry["path"]
-            if doc["recipient"] and type_name not in ("APPLICATION", "CONTRACT"):  # no address window printed
+            if doc["recipient"] and type_name not in ("APPLICATION", "CONTRACT") and generated.kind != "permission":
+                # (forms, contracts and the permission letter print no address window)
                 window = recipient_from_window(analyze(pages[0]).address_window)
                 assert window and (window.get("name") or window.get("company")) == doc["recipient"], entry["path"]
             if doc["iban"]:

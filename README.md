@@ -152,7 +152,7 @@ in `ground_truth.json`, so anyone can measure FluxSense against their own
 model server:
 
 ```bash
-fluxsense gen-testdocs --smoke --out smoke         # 30 files, seed 1
+fluxsense gen-testdocs --smoke --out smoke         # 34 files, seed 1
 fluxsense bench smoke --out smoke-run
 fluxsense score-testdocs --truth smoke/ground_truth.json --results smoke-run
 ```

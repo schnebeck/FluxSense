@@ -40,11 +40,12 @@ class Run:
     mono: bool = False
     align: str = "left"
     color: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    hand: bool = False  # handwriting-like entry (Times italic, blue)
 
     @property
     def font(self) -> str:
         """PyMuPDF base-14 font name."""
-        return _FONTS[(self.bold, self.mono)]
+        return "tiit" if self.hand else _FONTS[(self.bold, self.mono)]
 
     def width(self) -> float:
         """Rendered width in points."""
@@ -66,10 +67,10 @@ class Page:
     strokes: List[List[Tuple[float, float]]] = field(default_factory=list)
 
     def text(self, x: float, y: float, text: str, size: float = 9.0, bold: bool = False, mono: bool = False,
-             align: str = "left") -> None:
-        """Adds a text run (y = baseline)."""
+             align: str = "left", hand: bool = False) -> None:
+        """Adds a text run (y = baseline); hand = a handwriting-like entry."""
         if text:
-            self.runs.append(Run(x, y, text, size, bold, mono, align))
+            self.runs.append(Run(x, y, text, size, bold, mono, align, (0.05, 0.12, 0.5) if hand else (0.0, 0.0, 0.0), hand))
 
     def rule(self, x0: float, y: float, x1: float) -> None:
         """Adds a horizontal rule."""

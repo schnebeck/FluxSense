@@ -26,7 +26,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 from fluxsense.samples import embed_zugferd
 from fluxsense.testdata import ids, vocab
 from fluxsense.testdata.documents import (EPOCH, LogicalDoc, build_contract, build_enclosure, build_form, build_invoice,
-                                          build_letter, build_private_note, build_receipt, build_stack, build_statement,
+                                          build_landlord_confirmation, build_letter, build_permission_letter,
+                                          build_private_note, build_receipt, build_stack, build_statement,
                                           build_telecom_invoice, build_transfer)
 from fluxsense.testdata.layout import render
 from fluxsense.testdata.scan import make_scan
@@ -47,11 +48,13 @@ BUILDERS: Dict[str, Callable[[random.Random], List[LogicalDoc]]] = {
     "enclosure": lambda rng: [build_enclosure(rng)],
     "note": lambda rng: [build_private_note(rng)],
     "contract": lambda rng: [_contract(rng)],
+    "permission": lambda rng: [build_permission_letter(rng)],
+    "landlord_confirmation": lambda rng: [build_landlord_confirmation(rng, move_out=rng.random() < 0.3)],
     "stack": build_stack,
 }
 KINDS: Sequence[str] = ("invoice", "invoice_long", "invoice_bilingual", "invoice_zugferd", "telecom_invoice", "bank_statement",
                         "card_statement", "letter", "official_letter", "form", "receipt", "transfer", "note", "contract",
-                        "stack")
+                        "permission", "landlord_confirmation", "stack")
 SMOKE_SEED = 1
 
 
@@ -59,7 +62,7 @@ def _contract(rng: random.Random) -> LogicalDoc:
     """A rental contract signed 2-16 weeks before its start (consistent dates)."""
     start = ids.random_date(rng, EPOCH, 700).replace(day=1)
     signed = start - timedelta(days=rng.randint(14, 112))
-    return build_contract(rng, start, signed, signature_text=ids.fmt_date_de(signed))
+    return build_contract(rng, start, signed, signature_text=ids.fmt_date_de(signed), waiver_years=rng.choice((None, 2, 3)))
 
 
 @dataclass

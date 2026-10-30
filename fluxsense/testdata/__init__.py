@@ -15,12 +15,13 @@ Description:    Synthetic test-document generator: fictional data only,
 """
 
 from fluxsense.testdata.documents import (InvoiceStyle, LogicalDoc, build_contract, build_enclosure, build_form,
-                                          build_invoice, build_letter, build_private_note, build_receipt, build_stack,
+                                          build_invoice, build_landlord_confirmation, build_letter,
+                                          build_permission_letter, build_private_note, build_receipt, build_stack,
                                           build_statement, build_telecom_invoice, build_transfer)
 from fluxsense.testdata.generate import (KINDS, GeneratedFile, denylist_hits, generate_file, generate_set, rng_for,
                                          smoke_set, vocabulary)
 
 __all__ = ["InvoiceStyle", "LogicalDoc", "build_contract", "build_enclosure", "build_form", "build_invoice",
-           "build_letter", "build_private_note", "build_receipt", "build_stack", "build_statement",
-           "build_telecom_invoice", "build_transfer", "KINDS", "GeneratedFile", "denylist_hits", "generate_file",
-           "generate_set", "rng_for", "smoke_set", "vocabulary"]
+           "build_landlord_confirmation", "build_letter", "build_permission_letter", "build_private_note",
+           "build_receipt", "build_stack", "build_statement", "build_telecom_invoice", "build_transfer", "KINDS",
+           "GeneratedFile", "denylist_hits", "generate_file", "generate_set", "rng_for", "smoke_set", "vocabulary"]

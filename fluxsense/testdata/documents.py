@@ -518,7 +518,8 @@ def build_statement(rng: random.Random, card: bool = False, info_page: Optional[
 # ---------------------------------------------------------------------------------------------------------------- letters
 
 
-def build_letter(rng: random.Random, official: bool = False, deadline: Optional[bool] = None) -> LogicalDoc:
+def build_letter(rng: random.Random, official: bool = False, deadline: Optional[bool] = None,
+                 private: bool = False) -> LogicalDoc:
     """
     A DIN 5008 form-B letter: letterhead, return-address line, address
     window, info block ('Unser Zeichen', 'Datum'), subject, body, closing
@@ -527,6 +528,7 @@ def build_letter(rng: random.Random, official: bool = False, deadline: Optional[
     Args:
         rng: Random source.
         official: Letter from a public authority (OFFICIAL_LETTER).
+        private: Letter from a private person whose printed name matches the signature.
         deadline: Print a reply deadline (default: random).
 
     Returns:
@@ -538,6 +540,8 @@ def build_letter(rng: random.Random, official: bool = False, deadline: Optional[
     when = ids.random_date(rng, EPOCH, 720)
     reference = f"{rng.choice('ABCDEFGHKLMNPRSTVZ')}{rng.choice('ABCDEFGHKLMNPRSTVZ')}-{rng.randint(1000, 9999)}/{when.year % 100:02d}"
     contact = person(rng)
+    if private:
+        sender.name = contact.name  # the printed sender signs the letter
     subject, body = rng.choice(vocab.LETTER_SUBJECTS)
     subject = subject.format(ref_date=ids.fmt_date_de(when - timedelta(days=rng.randint(5, 30))))
     with_deadline = rng.random() < 0.5 if deadline is None else deadline
@@ -563,6 +567,8 @@ def build_letter(rng: random.Random, official: bool = False, deadline: Optional[
     page.text(LEFT, y + 20, sender.name, 10)
     signature(page, LEFT, y + 46, rng.randint(0, 999))
     page.text(LEFT, y + 66, contact.name, 9)
+    if private:
+        page.text(LEFT, y + 78, "(Unterschrift)", 7)
     _footer(page, sender)
     truth = _empty_truth()
     truth.update({"sender": sender.name, "recipient": recipient.name, "doc_date": when.isoformat(), "doc_number": reference,
@@ -744,7 +750,7 @@ def build_private_note(rng: random.Random, card: Optional[bool] = None) -> Logic
 
 
 def build_contract(rng: random.Random, start: date, signed: date, signature_text: Optional[str] = None,
-                   amendment: Optional[date] = None) -> LogicalDoc:
+                   amendment: Optional[date] = None, rent: bool = True, waiver_years: Optional[int] = None) -> LogicalDoc:
     """
     A two-page rental contract: landlord letterhead, contract number, start
     printed with a two-digit year ('Mietbeginn: ab 1.10.24'), rent, and a
@@ -758,9 +764,13 @@ def build_contract(rng: random.Random, start: date, signed: date, signature_text
         signed: Signing date (the doc_date), or the amendment date.
         signature_text: Text printed for the signing date instead of 'd/m/yy' (e.g. an OCR misreading).
         amendment: Date of a later amendment; the document is then that amendment.
+        rent: Print the rented flat, a rent table (components and the monthly total), the payee account and a
+            deposit; False = a contract without payment terms.
+        waiver_years: Print a mutual waiver of termination for this many years (a minimum term, not a notice period).
 
     Returns:
-        LogicalDoc (doc_types CONTRACT; facts: effective_date, signed, contract_number, start_text).
+        LogicalDoc (doc_types CONTRACT; facts: effective_date, contract_number, start_text, signing_line and - with rent -
+        components, rent_total, iban, bic, holder, reference, deposit, object).
     """
     landlord = organisation(rng, ["Beispiel Immobilien", "Muster Wohnbau"])
     tenant = person(rng)
@@ -771,19 +781,51 @@ def build_contract(rng: random.Random, start: date, signed: date, signature_text
     _letterhead(first, landlord)
     title = "Nachtrag Nr. 1 zum Mietvertrag" if amendment else "Mietvertrag über Wohnraum"
     first.text(LEFT, 110, title, 14, bold=True)
+    flat = person(rng).address
+    location = rng.choice(("EG links", "EG rechts", "1. OG links", "2. OG rechts", "DG"))
+    components = [("Grundmiete", ids.money(rng, 40000, 120000)), ("Pauschale für Betriebs- und Heizkosten", ids.money(rng, 9000, 30000)),
+                  ("Pauschale für Strom", ids.money(rng, 3000, 9000))]
+    total = sum((a for _, a in components), Decimal("0"))
+    deposit = total * 2
+    reference = f"Miete {flat.street} {location}"
     lines = [f"Vertragsnummer: {number}", f"zwischen {landlord.name}, {landlord.address.one_line()} (Vermieter)",
-             f"und {tenant.name}, {tenant.address.one_line()} (Mieter)", "",
-             f"§ 1 Mietbeginn: Das Mietverhältnis beginnt ab {start_text} und läuft auf unbestimmte Zeit.",
-             f"§ 2 Miete: Die monatliche Miete beträgt {ids.fmt_de(ids.money(rng, 45000, 140000))} EUR.",
-             "§ 3 Kaution: Die Kaution beträgt drei Monatsmieten."]
-    if amendment:
-        lines += ["", f"§ 4 Nachtrag: Ab {ids.fmt_date_de(amendment)} wird ein Stellplatz mitvermietet."]
+             f"und {tenant.name}, {tenant.address.one_line()} (Mieter)", ""]
+    if rent:
+        lines += [f"§ 1 Mietsache: Vermietet wird die Wohnung im Hause {flat.street}, {flat.zip_code} {flat.city}, {location}."]
+    lines += [f"§ 2 Mietbeginn: Das Mietverhältnis beginnt ab {start_text} und läuft auf unbestimmte Zeit."]
     y = 140.0
-    for line in lines:
-        for part in wrap(line, RIGHT - LEFT, 10) if line else [""]:
+
+    def put(text: str) -> None:
+        nonlocal y
+        for part in wrap(text, RIGHT - LEFT, 10) if text else [""]:
             if part:
                 first.text(LEFT, y, part, 10)
             y += 14
+
+    for line in lines:
+        put(line)
+    if rent:
+        put("§ 3 Miete: Die Miete ist monatlich im Voraus bis zum dritten Werktag zu zahlen. Sie setzt sich zusammen aus:")
+        for label, amount in components + [("Monatlich insgesamt zu zahlende Miete", total)]:
+            first.text(LEFT + 20, y, label, 10, bold=label.startswith("Monatlich"))
+            first.text(RIGHT, y, f"{ids.fmt_de(amount)} EUR", 10, bold=label.startswith("Monatlich"), align="right")
+            y += 14
+        y += 4
+        for label, value in (("Kontoinhaber", landlord.name), ("IBAN", ids.group_iban(landlord.iban)), ("BIC", landlord.bic),
+                             ("Verwendungszweck", reference)):
+            first.text(LEFT + 20, y, f"{label}: {value}", 10)
+            y += 14
+        y += 4
+        put(f"§ 4 Kaution: Die Kaution in Höhe von {ids.fmt_de(deposit)} EUR ist zu Beginn des Mietverhältnisses zu leisten.")
+    else:
+        put("§ 3 Hausordnung: Die Hausordnung ist Bestandteil dieses Vertrags.")
+    waiver = (f"Die Vertragsparteien verzichten wechselseitig auf ihr Recht zur Kündigung des Mietvertrags für die Dauer "
+              f"von {waiver_years} Jahren. Eine Kündigung ist erstmalig nach Ablauf dieses Zeitraums mit gesetzlicher Frist "
+              f"zulässig.")
+    if waiver_years:
+        put(f"§ 5 Kündigungsverzicht: {waiver}")
+    if amendment:
+        put(f"§ 6 Nachtrag: Ab {ids.fmt_date_de(amendment)} wird ein Stellplatz mitvermietet.")
     _footer(first, landlord, (1, 2))
     second.text(LEFT, 80, "§ 5 Schlussbestimmungen: Änderungen bedürfen der Schriftform.", 10)
     signing = signature_text or f"{doc_date.day}/{doc_date.month}/{doc_date.year % 100:02d}"
@@ -799,6 +841,99 @@ def build_contract(rng: random.Random, start: date, signed: date, signature_text
     doc.visual["has_signature"] = True
     doc.facts.update({"effective_date": start.isoformat(), "start_text": f"ab {start_text}", "contract_number": number,
                       "signing_line": f"{landlord.address.city}, den {signing}"})
+    if rent:
+        doc.facts.update({"components": [(label, float(amount)) for label, amount in components], "rent_total": float(total),
+                          "iban": landlord.iban, "bic": landlord.bic, "holder": landlord.name, "reference": reference,
+                          "deposit": float(deposit), "object": {"street": flat.street, "zip_code": flat.zip_code,
+                                                                "city": flat.city, "location_detail": location}})
+    if waiver_years:
+        doc.facts.update({"waiver_years": waiver_years, "waiver_clause": waiver})
+    return doc
+
+
+def build_permission_letter(rng: random.Random) -> LogicalDoc:
+    """
+    A short permission from a landlord to a tenant without letterhead: the
+    tenant is named in the printed text, the landlord's signature line is
+    blank, only the tenant signs by hand (§2.9: no sender is printed).
+    """
+    tenant = person(rng)
+    when = ids.random_date(rng, EPOCH, 720)
+    page = Page()
+    page.text(LEFT, 110, "Genehmigung", 14, bold=True)
+    title = "Der Mieterin" if tenant.female else "Dem Mieter"
+    salutation = "Frau" if tenant.female else "Herrn"
+    body = (f"{title} {salutation} {tenant.name}, {tenant.address.one_line()}, wird genehmigt, im Garten des Hauses ein "
+            f"Gewächshaus aufzustellen. Die Genehmigung kann jederzeit widerrufen werden.")
+    y = 150.0
+    for part in wrap(body, RIGHT - LEFT, 10):
+        page.text(LEFT, y, part, 10)
+        y += 14
+    page.rule(LEFT, y + 60, LEFT + 200)
+    page.text(LEFT, y + 72, "Datum/Unterschrift Vermieter", 8)
+    page.text(330, y + 52, ids.fmt_date_de(when), 11, hand=True)
+    signature(page, 410, y + 50, rng.randint(0, 999))
+    page.rule(330, y + 60, RIGHT)
+    page.text(330, y + 72, "Datum/Unterschrift Mieter", 8)
+    truth = _empty_truth()
+    truth.update({"recipient": tenant.name})  # the only date is the tenant's handwritten one next to the signature (§3)
+    doc = LogicalDoc("permission", ["OTHER", "LETTER"], [page], truth, summary="Permission of the landlord")
+    doc.visual.update({"has_signature": True, "has_handwriting": True})
+    doc.facts.update({"tenant": tenant.name, "tenant_surname": tenant.last})
+    return doc
+
+
+def build_landlord_confirmation(rng: random.Random, move_out: bool = False) -> LogicalDoc:
+    """
+    A landlord's confirmation of a move-in / move-out (Wohnungsgeberbestätigung
+    nach § 19 BMG): a printed form filled in by hand (handwriting-like font)
+    with the issuer, the event and its date, the flat address and floor, the
+    persons and a signature; a form print number in the footer (§4: never the
+    doc_number).
+    """
+    landlord, flat = person(rng), person(rng).address
+    movers = [person(rng) for _ in range(rng.randint(1, 2))]
+    event_date = ids.random_date(rng, EPOCH, 700)
+    signed = event_date + timedelta(days=rng.randint(0, 10))
+    floor = rng.choice(("EG", "1. OG links", "2. OG rechts", "DG"))
+    page = Page()
+    page.text(LEFT, 70, "Wohnungsgeberbestätigung", 15, bold=True)
+    page.text(LEFT, 86, "nach § 19 des Bundesmeldegesetzes (BMG) - zur Vorlage bei der Meldebehörde", 8.5)
+    y = 120.0
+
+    def row(label: str, value: str, tick: Optional[bool] = None) -> None:
+        nonlocal y
+        box = "[x] " if tick else "[ ] " if tick is False else ""
+        page.text(LEFT, y, f"{box}{label}", 9)
+        if value:
+            page.text(230, y, value, 11, hand=True)
+        page.rule(228, y + 3, RIGHT)
+        y += 26
+
+    row("Name des Wohnungsgebers:", landlord.name)
+    row("Einzug am:", "" if move_out else ids.fmt_date_de(event_date), tick=not move_out)
+    row("Auszug am:", ids.fmt_date_de(event_date) if move_out else "", tick=move_out)
+    row("Anschrift der Wohnung:", f"{flat.street}, {flat.zip_code} {flat.city}")
+    row("Geschoss / Lage:", floor)
+    row("Folgende Person(en) ist/sind ein- bzw. ausgezogen:", "")
+    for mover in movers:
+        page.text(230, y - 10, mover.name, 11, hand=True)
+        y += 16
+    row("Anschrift des Wohnungsgebers:", landlord.address.one_line().replace(" · ", ", "))
+    row("Der Wohnungsgeber ist Eigentümer der Wohnung", "", tick=True)
+    row("Ort, Datum:", f"{landlord.address.city}, {ids.fmt_date_de(signed)}")
+    signature(page, 240, y + 4, rng.randint(0, 999))
+    page.rule(228, y + 12, RIGHT)
+    page.text(230, y + 24, "Unterschrift des Wohnungsgebers", 8)
+    code = f"{rng.randint(32, 99)}.{rng.randint(1, 9)}.{rng.randint(1, 999):03d}"
+    page.text(LEFT, 815, code, 6.5)
+    truth = _empty_truth()
+    truth.update({"sender": landlord.name, "doc_date": signed.isoformat()})
+    doc = LogicalDoc("landlord_confirmation", ["CERTIFICATE"], [page], truth, summary="Wohnungsgeberbestätigung")
+    doc.visual.update({"has_signature": True, "has_handwriting": True})
+    doc.facts.update({"persons": [m.name for m in movers], "event": "MOVE_OUT" if move_out else "MOVE_IN",
+                      "event_date": event_date.isoformat(), "form_code": code, "floor": floor,
+                      "subject": {"street": flat.street, "zip_code": flat.zip_code, "city": flat.city}})
     return doc
 
 
