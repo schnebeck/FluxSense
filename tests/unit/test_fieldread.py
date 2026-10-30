@@ -206,3 +206,156 @@ def test_printed_letter_does_not_trigger(settings: Any, tmp_path: Path) -> None:
     layer = build(pdf, settings, "native")
     seen: List[LLMRequest] = []
     assert FieldReader(FakeBackend(lambda r: seen.append(r)), settings).run(pdf, layer.pages) == [] and seen == []
+
+
+def _checkbox_form(rng: random.Random, move_in: str) -> Tuple[Page, Dict[str, Any]]:
+    """Ticked inline 'Einzug am' with a handwritten date, directly above an unticked, empty 'Auszug am'; a name+address
+    header block; a short floor entry the OCR reads too."""
+    landlord, mover = person(rng), person(rng)
+    page = Page()
+    page.text(LEFT, 60, "Wohnungsgeberbestätigung", 15, bold=True)
+    page.text(LEFT, 120, "[x] Einzug am", 10)
+    page.text(LEFT + 110, 120, move_in, 12, hand=True)
+    page.text(LEFT, 140, "[ ] Auszug am", 10)
+    page.text(LEFT, 180, "Geschoss / Lage:", 10)
+    page.text(LEFT + 110, 180, "DG", 12, hand=True)
+    page.text(LEFT, 220, "Telefon:", 10)
+    page.text(LEFT, 260, "Name und Anschrift des Wohnungsgebers lauten:", 9)
+    page.text(LEFT + 4, 280, landlord.name, 12, hand=True)
+    page.text(LEFT + 4, 298, f"{landlord.address.street}, {landlord.address.zip_code} {landlord.address.city}", 12, hand=True)
+    page.text(LEFT, 360, "Folgende Person(en) ist/sind eingezogen:", 9)
+    page.text(LEFT + 4, 380, mover.name, 12, hand=True)
+    return page, {"landlord": landlord, "mover": mover.name}
+
+
+def _checkbox_items(page: Page) -> List[Dict[str, Any]]:
+    """OCR layout of the checkbox form: boxes as glyphs, the short floor entry read, other handwriting garbled."""
+    items = []
+    for run in page.runs:
+        content = run.text.replace("[x]", "☒").replace("[ ]", "☐")
+        if run.hand and run.text != "DG":
+            content = "".join(chr(ord(c) + 1) if c.isalpha() else c for c in run.text)[:8]
+        items.append({"bbox": [round(run.left() / page.width * 1000), round((run.y - run.size) / page.height * 1000),
+                               round((run.left() + run.width()) / page.width * 1000), round((run.y + 2) / page.height * 1000)],
+                      "category": "text", "content": content})
+    return items
+
+
+def _checkbox_run(tmp_path: Path, settings: Any, move_in: str, answer_in: Tuple[str, Optional[str]]) -> Tuple[Any, Dict[str, Any], List[LLMRequest]]:
+    page, facts = _checkbox_form(random.Random("checkbox-form"), move_in)
+    pdf = _scan(page, tmp_path / "boxes.pdf")
+    landlord = facts["landlord"]
+    block = f"{landlord.name}\n{landlord.address.street}, {landlord.address.zip_code} {landlord.address.city}"
+    answers = {"Einzug am": answer_in, "Geschoss / Lage:": ("DG", None), "Telefon:": (EMPTY, None),
+               "Name und Anschrift des Wohnungsgebers lauten:": (block, None),
+               "Folgende Person(en) ist/sind eingezogen:": (facts["mover"], None)}
+    seen: List[LLMRequest] = []
+
+    def handler(request: LLMRequest) -> Optional[Any]:
+        if request.label.startswith("OCR ovisocr3"):
+            return _checkbox_items(page)
+        if request.label.startswith("Fieldread"):
+            seen.append(request)
+            label = request.prompt.split('The printed label of the field is: "')[1].split('"')[0]
+            entry, iso = answers.get(label, (EMPTY, None))
+            return {"entry": entry, "iso": iso}
+        if request.label.startswith("Stage 1.1"):
+            return {"detected_entities": [{"type_tags": ["CERTIFICATE"], "page_indices": [1], "direction": "INBOUND",
+                                           "tenant_context": "PRIVATE", "confidence": 0.9}]}
+        if request.label.startswith("Stage 2"):
+            return {"meta_header": {}, "bodies": {"legal_body": {"document_title": "Wohnungsgeberbestätigung"}}}
+        return None
+
+    settings.extract.engine = "ovisocr3"
+    result = Analyzer(settings, backend=FakeBackend(handler)).analyze(pdf)
+    return result, facts, seen
+
+
+def test_unticked_option_is_ignored_and_inline_crop_stays_on_its_line(settings: Any, tmp_path: Path) -> None:
+    """The unticked 'Auszug am' directly below the ticked 'Einzug am' is never read; the ticked one decides MOVE_IN with
+    its own date; the inline crop of 'Einzug am' does not reach the row above or below."""
+    result, facts, seen = _checkbox_run(tmp_path, settings, "3.2.24", ("3.2.24", "2024-02-03"))
+    labels = [r.prompt.split('field is: "')[1].split('"')[0] for r in seen]
+    assert "Einzug am" in labels and not any(label.startswith("Auszug") for label in labels)
+    legal = result.logical_documents[0].fields["bodies"]["legal_body"]
+    assert legal["certified_event"] == "MOVE_IN" and legal["event_date"] == "2024-02-03"
+    from fluxsense.extract.fieldread import FieldReader as Reader
+    layer = build_text_layer(_scan(_checkbox_form(random.Random("checkbox-form"), "3.2.24")[0], tmp_path / "again.pdf"),
+                             settings, "ovisocr3", backend=FakeBackend(lambda r: _checkbox_items(
+                                 _checkbox_form(random.Random("checkbox-form"), "3.2.24")[0])))
+    fields = Reader(FakeBackend(lambda r: {"entry": EMPTY}), settings).run(tmp_path / "again.pdf", layer.pages)
+    einzug = next(f for f in fields if f.label == "Einzug am")
+    auszug_top = (140 - 10) / 842 * 842  # the row below starts at its text top (baseline 140, 10 pt)
+    assert einzug.ticked is True and einzug.region[1] > 62 and einzug.region[3] < auszug_top and einzug.region[0] >= einzug.bbox[2]
+
+
+def test_ambiguous_handwritten_date_is_flagged_not_accepted(settings: Any, tmp_path: Path) -> None:
+    """The reader returns '11/10/26' for a written '1|10|26': both readings are named, the date is not accepted."""
+    result, _, _ = _checkbox_run(tmp_path, settings, "1|10|26", ("11/10/26", "2026-10-11"))
+    ld = result.logical_documents[0]
+    ambiguous = [c for c in ld.plausibility.findings if c.check_id == CHECK_AMBIGUOUS]
+    assert ambiguous and "2026-10-01" in ambiguous[0].message and "2026-10-11" in ambiguous[0].message
+    ev = next(e for e in ld.evidence if e.path == "bodies.legal_body.event_date")
+    assert not ev.auto_accepted
+
+
+def test_single_reading_is_never_auto_accepted_but_agreement_may_be(settings: Any, tmp_path: Path) -> None:
+    """A handwritten value read only from its crop is flagged 'single reading'; the floor 'DG' that the OCR text also
+    reads is an independent second reading and may be accepted; the name+address block is split."""
+    result, facts, _ = _checkbox_run(tmp_path, settings, "3.2.24", ("3.2.24", "2024-02-03"))
+    ld = result.logical_documents[0]
+    by_path = {e.path: e for e in ld.evidence}
+    name = by_path["meta_header.sender.name"]
+    assert not name.auto_accepted and "handwritten form field (single reading)" in name.review_reasons
+    floor = by_path["bodies.legal_body.subject_address.location_detail"]
+    assert "handwritten form field (single reading)" not in floor.review_reasons and floor.auto_accepted
+    sender = ld.fields["meta_header"]["sender"]
+    landlord = facts["landlord"]
+    assert sender["name"] == landlord.name and sender["zip_code"] == landlord.address.zip_code
+    assert sender["street"] != landlord.name and landlord.address.street.startswith(sender["street"])
+
+
+def test_name_with_street_only_is_not_mapped_to_street() -> None:
+    """'Name, Street' without number and postcode: the name maps, nothing becomes a street."""
+    from fluxsense.extract.fieldread import split_name_address
+    assert split_name_address("Erika Probe, Musterweg") == ("Erika Probe", {})
+
+
+def test_signature_page_with_date_lines_only_is_read(settings: Any, tmp_path: Path) -> None:
+    """A scanned contract signature page with only '<Ort>, den 7/8/24' (OCR: '71804') and an empty 'Ort, den': the date
+    lines alone trigger the field reading; the reading replaces the full-page misreading and stays flagged."""
+    from datetime import date as day
+    from fluxsense.testdata import build_contract
+    doc = build_contract(random.Random("signature-page"), day(2024, 10, 1), day(2024, 8, 7), signature_text="7/8/24", rent=False)
+    page = doc.pages[1]
+    page.text(330, 160, "Ort, den", 11)
+    pdf = _scan(page, tmp_path / "signatures.pdf")
+    seen: List[LLMRequest] = []
+
+    def items() -> List[Dict[str, Any]]:
+        out = _ovis_items(page)
+        for item in out:
+            item["content"] = item["content"].replace("7/8/24", "71804")
+        return out
+
+    def handler(request: LLMRequest) -> Optional[Any]:
+        if request.label.startswith("OCR ovisocr3"):
+            return items()
+        if request.label.startswith("Fieldread"):
+            seen.append(request)
+            label = request.prompt.split('field is: "')[1].split('"')[0]
+            return {"entry": "7/8/24", "iso": "2024-08-07"} if label != "Ort, den" else {"entry": EMPTY}
+        if request.label.startswith("Stage 1.1"):
+            return {"detected_entities": [{"type_tags": ["CONTRACT"], "page_indices": [1], "direction": "INBOUND",
+                                           "tenant_context": "PRIVATE", "confidence": 0.9}]}
+        if request.label.startswith("Stage 2"):
+            return {"meta_header": {"doc_date": {"v": "2018-04-07", "p": 1}}, "bodies": {"legal_body": {}}}
+        return None
+
+    settings.extract.engine = "ovisocr3"
+    ld = Analyzer(settings, backend=FakeBackend(handler)).analyze(pdf).logical_documents[0]
+    labels = sorted(r.prompt.split('field is: "')[1].split('"')[0] for r in seen)
+    assert len(labels) == 2 and all(label.endswith(", den") for label in labels)
+    assert ld.fields["meta_header"]["doc_date"] == "2024-08-07"
+    ev = next(e for e in ld.evidence if e.path == "meta_header.doc_date")
+    assert not ev.auto_accepted and "handwritten form field (single reading)" in ev.review_reasons

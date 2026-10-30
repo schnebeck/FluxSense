@@ -294,6 +294,7 @@ class Assessor:
         self.first_lines = self.page_lines.get(pages[0], []) if pages else []
         self.lines = [line for p in pages for line in self.page_lines.get(p, [])]
         self.fieldread = fieldread_values(layer, pages)
+        self._independent: Optional[Dict[int, Any]] = None
         self.text = "\n".join(self.lines)
         self.text_norm = normalize_text(self.text)
         self.checks = [c for c in checks if c.status == CheckStatus.FAIL and c.field]
@@ -510,6 +511,26 @@ class Assessor:
             return parsed is not None and parsed.isoformat() in self.fieldread
         return bool(ev.value) and compact(str(ev.value)) in {compact(v) for v in self.fieldread}
 
+    def _single_reading(self, ev: FieldEvidence) -> bool:
+        """
+        §12: a form-field reading without an independent second reading - the
+        same value in another text source of the page (native text layer, OCR
+        / layout text). The full-page extraction is no second reading: it saw
+        the FORM FIELDS block.
+        """
+        if not self.fieldread or not self._field_reading(ev):
+            return False
+        if self._independent is None:
+            from fluxsense.extract.base import PageText
+            pages = []
+            for number in self.pages:
+                page = self.layer.page(number)
+                if page is not None:
+                    pages.append(PageText(page=number, width=page.width, height=page.height,
+                                          sources={k: v for k, v in page.sources.items() if k != "fieldread"}))
+            self._independent = build_index(TextLayer(pages=pages, engine="independent"), self.pages)
+        return ground_value(ev.kind, ev.value, self._independent).status != GroundingStatus.GROUNDED
+
     def _labelled_gross(self, value: Any) -> bool:
         """The amount due equals the grand total, and that total is confirmed or printed next to a total label."""
         ms = ((self.fields.get("bodies") or {}).get("finance_body") or {}).get("monetary_summation") or {}
@@ -628,6 +649,8 @@ class Assessor:
         if ev.path in self.outranked:
             reasons.append("an earlier listed label prints another number (§0.4)")
         reasons += self._identifier_reasons(ev)
+        if self._single_reading(ev):
+            reasons.append("handwritten form field (single reading)")
         named = (CHECK_CONSISTENCY, CHECK_YEAR, "fieldread.disagreement", "fieldread.ambiguous", "grounding.iban_printed_invalid")
         date_reasons = list(dict.fromkeys(c.message for c in self.checks if c.check_id in named and c.field == ev.path))
         if date_reasons:  # §9 / §12: name the conflicting value, the ambiguous readings or the year decision

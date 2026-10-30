@@ -236,24 +236,40 @@ insurance policies carry their payment terms in `legal_body`:
 ## 12. Form fields read by their label
 
 On scanned pages of forms (no native text layer, at least three printed
-field labels of the lexicon) each printed label is read on its own:
+field labels of the lexicon - or only date / signature lines such as
+`..., den`, `Ort, Datum`, `Datum/Unterschrift`, which are then read alone)
+each printed label is read on its own:
 
 - The label (`Ort, Datum`, `..., den`, `Einzug am`, `Name des ...`,
   `Anschrift ...`, `Geschoss / Lage`, `Telefon`, `für folgende Person(en)`,
   ...) gives the field kind (date, place and date, name, persons, address,
   location, phone).
-- Its entry region - above / around the label (label under the entry
-  line), to its right (inline), or below it for a header label (`...
-  lauten:`) - is cropped from the scan's native resolution and read by the
-  vision model with the label and a type hint only; the full-page value is
-  never shown. An empty field is answered `EMPTY` and yields no value.
+- Its entry region is cropped from the scan's native resolution and read
+  by the vision model with the label and a type hint only; the full-page
+  value is never shown. Regions are clipped at neighbouring labels: an
+  inline label (ending in `am`, `den`, `vom`, `bis`, `:` with ink to its
+  right) uses only its own text band up to the next label on the line; a
+  label printed under its entry line looks upward to the next label above;
+  a header label (`... lauten:`) looks down to the next label below. An
+  empty field is answered `EMPTY` and yields no value.
+- A checkbox before the label decides: an unticked option is not read, the
+  ticked one gives the certified event (`Einzug am` -> MOVE_IN); an unknown
+  tick state is flagged (`fieldread.checkbox_unknown`).
 - Dates are normalised to ISO. When separators and digits can be confused
   (`1|10|26`: a bar is a separator or a one) every valid reading is kept;
   more than one reading flags the field (`fieldread.ambiguous`, naming the
   readings).
 - The readings form a FORM FIELDS block of the page text for the
   extraction and a `fieldread` text source for grounding; a value equal to
-  a reading has provenance `label`.
+  a reading has provenance `label`, but a handwritten reading alone is
+  never auto-accepted ("handwritten form field (single reading)"): it needs
+  an independent second reading with the same value in another text source
+  of the page (native text, OCR / layout text) - the full-page extraction
+  saw the FORM FIELDS block and does not count - and, for dates, a single
+  reading.
+- Date readings include the `1` / `|` / `/` swaps of handwriting
+  (`11/10/26` may be `1|10|26`); a name + address block is split into name
+  and address parts (a name never becomes a street) or left as context.
 - Unambiguous labels map directly: `Ort, Datum` / `..., den` -> doc_date,
   `Einzug am` / `Auszug am` -> certified_event and event_date, the persons
   -> certified_persons, the issuer's name and address -> sender, the flat

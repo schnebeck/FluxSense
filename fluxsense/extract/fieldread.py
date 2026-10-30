@@ -96,10 +96,14 @@ TYPE_HINTS: Dict[str, str] = {
 }
 PROMPT = ('This is a crop of a German form. The printed label of the field is: "{label}". Read only the handwritten (or '
           'typed) ENTRY that belongs to this label - not the printed labels. If the field is empty answer EMPTY. {hint} '
-          'Answer as JSON: {{"entry": "<the entry as written, or EMPTY>", "iso": "<ISO date or null>"}}')
+          'If the handwriting allows several readings, list every plausible ISO date in "candidates". '
+          'Answer as JSON: {{"entry": "<the entry as written, or EMPTY>", "iso": "<ISO date or null>", '
+          '"candidates": ["<ISO date>", ...]}}')
 SCHEMA: Dict[str, Any] = {"type": "object", "additionalProperties": False,
                           "properties": {"entry": {"type": "string", "maxLength": 200},
-                                         "iso": {"type": ["string", "null"], "maxLength": 10}},
+                                         "iso": {"type": ["string", "null"], "maxLength": 10},
+                                         "candidates": {"type": "array", "items": {"type": "string", "maxLength": 10},
+                                                        "maxItems": 4}},
                           "required": ["entry"]}
 
 
@@ -116,6 +120,7 @@ class FormField:
     entry: Optional[str] = None
     value: Optional[str] = None  # normalised value (ISO date for date kinds)
     candidates: List[str] = field(default_factory=list)
+    ticked: Optional[bool] = None  # checkbox before the label: True ticked, False unticked, None no box / unknown
 
     @property
     def empty(self) -> bool:
@@ -168,36 +173,84 @@ def find_labels(page: PageText) -> List[FormField]:
         if rule is None:
             continue
         label = text.strip()
-        match = re.match(r"^(.*?(?::|\bam|\bden))\s+\S", label)
+        box_match = _CHECKBOX_RE.match(label)
+        ticked = None
+        if box_match:
+            ticked = box_match.group(1) in TICKED
+            label = label[box_match.end():].strip()
+        match = re.match(r"^(.*?(?::|\bam|\bden|\bvom|\bbis))\s+\S", label)
         if match and rule.kind in (DATE, PLACE_DATE, NAME, ADDRESS, LOCATION, PHONE) and len(match.group(1)) < len(label):
             label = match.group(1).strip()
-        fields.append(FormField(page.page, label, rule.kind, rule.target, box))
+        fields.append(FormField(page.page, label, rule.kind, rule.target, box, ticked=ticked))
     return fields
 
 
-def entry_region(fld: FormField, width: float, height: float, below: bool) -> Tuple[float, float, float, float]:
+TICKED = ("☒", "☑", "✓", "✔", "■", "[x]", "[X]", "(x)", "(X)", "x", "X")
+_CHECKBOX_RE = re.compile(r"^\s*(☒|☑|✓|✔|■|☐|□|\[x\]|\[X\]|\[ \]|\(x\)|\(X\)|\( \)|[xX](?=\s+[A-ZÄÖÜ]))\s*")
+INLINE_END_RE = re.compile(r"(\bam|\bden|\bvom|\bbis|:)\s*$", re.IGNORECASE)
+
+
+def entry_region(fld: FormField, width: float, height: float, below: bool, inline: bool = False,
+                 others: Sequence[FormField] = ()) -> Tuple[float, float, float, float]:
     """
-    The entry region of a label in page points: beside / above the label
-    (German forms put the label under the entry line, or the entry inline to
-    the right), or below it for a header label ('... lauten:').
+    The entry region of a label in page points, clipped at the neighbouring
+    labels:
+    - inline (label ending in 'am', 'den', 'vom', 'bis' or ':' with the entry
+      to its right): the label's own text band (y0 - 0.6h .. y1 + 0.6h), from
+      the label's end to the next label on that line (else half a page
+      width) - never the row above;
+    - below (header label '... lauten:'): the lines under the label down to
+      the next label below;
+    - otherwise (label printed under its entry line): around and above the
+      label, up to the next label above.
     """
     x0, y0, x1, y1 = fld.bbox
     h = max(6.0, y1 - y0)
+
+    def overlaps_x(o: FormField, left: float, right: float) -> bool:
+        return o.bbox[0] < right and o.bbox[2] > left
+
+    if inline:
+        right = min(width, x1 + 0.5 * width)
+        same_line = [o.bbox[0] for o in others if o is not fld and o.bbox[0] > x1 and abs((o.bbox[1] + o.bbox[3]) / 2 - (y0 + y1) / 2) < h]
+        if same_line:
+            right = min(right, min(same_line) - 2)
+        return (x1, max(0.0, y0 - 0.6 * h), max(x1 + 10, right), min(height, y1 + 0.6 * h))
     if below:
-        return (max(0.0, x0 - 20), y0, min(width, max(x1 + 0.45 * width, x0 + 0.85 * width)), min(height, y1 + 6.5 * h))
-    return (max(0.0, x0 - 20), max(0.0, y0 - 3.2 * h), min(width, max(x1 + 0.45 * width, x0 + 0.55 * width)),
-            min(height, y1 + 1.2 * h))
+        left, right = max(0.0, x0 - 20), min(width, max(x1 + 0.45 * width, x0 + 0.85 * width))
+        bottom = min(height, y1 + 6.5 * h)
+        under = [o.bbox[1] for o in others if o is not fld and o.bbox[1] > y1 and overlaps_x(o, left, right)]
+        if under:
+            bottom = min(bottom, min(under) - 1)
+        return (left, y0, right, max(y1 + h, bottom))
+    left, right = max(0.0, x0 - 20), min(width, max(x1 + 0.45 * width, x0 + 0.55 * width))
+    top = max(0.0, y0 - 3.2 * h)
+    above = [o.bbox[3] for o in others if o is not fld and o.bbox[3] <= y0 and overlaps_x(o, left, right)]
+    if above:
+        top = max(top, max(above) + 1)
+    return (left, top, right, min(height, y1 + 1.2 * h))
+
+
+def ink_share(image: Image.Image, page_width: float, page_height: float, box: Tuple[float, float, float, float]) -> float:
+    """Share of dark pixels of a page-point box on a low-resolution page render."""
+    sx, sy = image.width / page_width, image.height / page_height
+    crop = image.crop((int(box[0] * sx), int(box[1] * sy), max(int(box[0] * sx) + 1, int(box[2] * sx)),
+                       max(int(box[1] * sy) + 1, int(box[3] * sy)))).convert("L")
+    histogram = crop.histogram()
+    return sum(histogram[:160]) / max(1, crop.width * crop.height)
 
 
 def form_like(page: PageText, labels: Sequence[FormField], handwriting: bool) -> bool:
     """
     Trigger: a scanned page (no native text layer: a digital page prints its
-    entries as text) on which the audit saw handwriting next to labels, or
-    at least MIN_LABELS lexicon labels sit.
+    entries as text) on which the audit saw handwriting next to labels, at
+    least MIN_LABELS lexicon labels sit, or a date / signature line sits
+    ('..., den', 'Ort, Datum', 'Datum/Unterschrift', 'Datum:' - then only
+    those fields are read).
     """
     if page.sources.get("native", "").strip():
         return False
-    return bool(labels) and (handwriting or len(labels) >= MIN_LABELS)
+    return bool(labels) and (handwriting or len(labels) >= MIN_LABELS or any(l.kind in (DATE, PLACE_DATE) for l in labels))
 
 
 _DATE_PARTS_RE = re.compile(r"(?<!\d)(\d{1,2})\s*([./|])\s*(\d{1,2})\s*([./|])\s*(\d{2}|\d{4})(?!\d)")
@@ -211,9 +264,10 @@ def _expand_year(year: str) -> int:
 def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional[date] = None) -> List[str]:
     """
     ISO readings of a handwritten date: the model's ISO value, the entry with
-    '.', '/' or '|' as separators, and the readings where a bar next to a
-    '1' is part of the digit ('1|10|26' -> 01.10.2026 or 11.10.2026); invalid
-    and future dates are dropped.
+    '.', '/' or '|' as separators, every single '1' / '|' / '/' swap
+    ('11/10/26' may be '1|10|26'), and the readings where a bar next to a '1'
+    is part of the digit ('1|10|26' -> 01.10.2026 or 11.10.2026); invalid and
+    future dates are dropped.
     """
     today = today or date.today()
     found: List[str] = []
@@ -230,6 +284,20 @@ def date_candidates(entry: str, model_iso: Optional[str] = None, today: Optional
     if iso:
         add(int(iso.group(3)), int(iso.group(2)), int(iso.group(1)))
     text = entry.replace(" ", "")
+    # '1', '|' and '/' are confused in handwriting: every single swap is a reading (repeated separators collapse)
+    def swappable(i: int, ch: str) -> bool:
+        if ch == "|":
+            return True
+        near = text[max(0, i - 1):i] + text[i + 1:i + 2]
+        return ch == "1" and any(c in "1|/." for c in near)
+
+    handwritten_seps = "|" in text or "/" in text
+    variants = [text] + ([text[:i] + alt + text[i + 1:] for i, ch in enumerate(text) if swappable(i, ch)
+                          for alt in "1|/" if alt != ch] if handwritten_seps else [])
+    for variant in variants[1:]:
+        swapped = _DATE_PARTS_RE.search(re.sub(r"[./|]{2,}", ".", variant))
+        if swapped:
+            add(int(swapped.group(1)), int(swapped.group(3)), _expand_year(swapped.group(5)))
     match = _DATE_PARTS_RE.search(text)
     if match:
         day, sep1, month, sep2, year = match.groups()
@@ -282,7 +350,13 @@ class FieldReader:
         if fld.empty:
             return fld
         if fld.kind in (DATE, PLACE_DATE):
+            extra = [c for c in (answer.get("candidates") or []) if isinstance(c, str)] if isinstance(answer, dict) else []
             fld.candidates = date_candidates(entry, iso if isinstance(iso, str) else None)
+            for value in extra:  # the reader's own alternative readings (ISO), validated like the others
+                iso_match = re.match(r"(\d{4})-(\d{2})-(\d{2})$", value)
+                for reading in date_candidates(f"{iso_match.group(3)}.{iso_match.group(2)}.{iso_match.group(1)}") if iso_match else []:
+                    if reading not in fld.candidates:
+                        fld.candidates.append(reading)
             fld.value = fld.candidates[0] if len(fld.candidates) == 1 else (iso if isinstance(iso, str) else None)
         else:
             fld.value = entry
@@ -306,11 +380,22 @@ class FieldReader:
             labels = find_labels(page)
             if not form_like(page, labels, handwriting):
                 continue
+            if len(labels) < MIN_LABELS and not handwriting:
+                labels = [label for label in labels if label.kind in (DATE, PLACE_DATE)]  # date / signature lines only
             dpi = min(NATIVE_MAX_DPI, max(300, native_dpi(pdf_path, page.page - 1) or 300))
+            from fluxsense.llm.images import render_page
+            overview = render_page(pdf_path, page.page - 1, dpi=100)
+            width, height = page.width or 595.0, page.height or 842.0
             for fld in labels[:self.settings.pipeline.fieldread_max_fields]:
+                if fld.ticked is False:
+                    continue  # an unticked option: its field is not filled
                 rule = classify_label(fld.label)
                 below = bool(rule and (rule.below or _BELOW_HINT_RE.search(fld.label) and rule.kind in (ADDRESS, PERSONS)))
-                fld.region = entry_region(fld, page.width or 595.0, page.height or 842.0, below)
+                inline = False
+                if not below and INLINE_END_RE.search(fld.label):
+                    band = entry_region(fld, width, height, False, True, labels)
+                    inline = ink_share(overview, width, height, (band[0] + 2, band[1], band[2], band[3])) > 0.003
+                fld.region = entry_region(fld, width, height, below, inline, labels)
                 jobs.append((fld, dpi))
         if not jobs:
             return []
@@ -340,6 +425,21 @@ def form_fields_block(page: PageText) -> str:
 
 _ADDRESS_RE = re.compile(r"^\s*(?P<street>.+?)\s+(?P<number>\d+\s?[a-zA-Z]?)\s*,\s*(?P<zip>\d{5})\s+(?P<city>.+?)\s*$")
 CHECK_DISAGREE = "fieldread.disagreement"
+CHECK_CHECKBOX = "fieldread.checkbox_unknown"
+
+
+def split_name_address(entry: str) -> Tuple[Optional[str], Dict[str, str]]:
+    """
+    A 'name and address' entry: the first line (or the first comma part)
+    without digits is the name; the rest must parse as 'Street No, Postcode
+    Town' to be used. A name never becomes a street.
+    """
+    parts = [p.strip() for p in (entry.splitlines() if "\n" in entry else entry.split(",")) if p.strip()]
+    if not parts:
+        return None, {}
+    name = parts[0] if not re.search(r"\d", parts[0]) else None
+    rest = parts[1:] if name else parts
+    return name, parse_address(", ".join(rest)) if rest else {}
 CHECK_AMBIGUOUS = "fieldread.ambiguous"
 
 
@@ -413,8 +513,12 @@ def map_fields(fields: Dict[str, Any], evidence: List[Any], form: Sequence[FormF
         if fld.target == "doc_date" and fld.value and re.match(r"\d{4}-\d{2}-\d{2}$", fld.value):
             put("meta_header.doc_date", fld.value, fld)
         elif fld.target.startswith("event.") and legal is not None and fld.value and re.match(r"\d{4}-\d{2}-\d{2}$", fld.value):
-            legal["certified_event"] = fld.target.split(".", 1)[1]
+            legal["certified_event"] = fld.target.split(".", 1)[1]  # an unticked option was never read
             put("bodies.legal_body.event_date", fld.value, fld)
+            if fld.ticked is None:
+                checks.append(CheckResult(check_id=CHECK_CHECKBOX, rule="fieldread", status=CheckStatus.FAIL,
+                                          severity=Severity.WARNING, field="bodies.legal_body.event_date",
+                                          message=f"checkbox state of '{fld.label}' unknown - is this option ticked?"))
         elif fld.target == "certified_persons" and legal is not None:
             persons = [p.strip() for p in re.split(r"[;\n]", fld.entry) if p.strip()]
             if persons and persons != legal.get("certified_persons"):
@@ -422,12 +526,15 @@ def map_fields(fields: Dict[str, Any], evidence: List[Any], form: Sequence[FormF
                 notes.append(f"certified_persons = {persons} from the field '{fld.label}'")
         elif fld.target == "sender.name":
             put("meta_header.sender.name", value, fld)
-        elif fld.target in ("sender.address", "sender"):
-            parts = parse_address(fld.entry.splitlines()[-1] if fld.target == "sender" else fld.entry)
-            for key, part in parts.items():
+        elif fld.target == "sender.address":
+            for key, part in parse_address(fld.entry).items():
                 put(f"meta_header.sender.{key}", part, fld)
-            if fld.target == "sender" and len(fld.entry.splitlines()) > 1:
-                put("meta_header.sender.name", fld.entry.splitlines()[0].strip(), fld)
+        elif fld.target == "sender":  # a name + address block: split, or only FORM FIELDS context
+            name, address = split_name_address(fld.entry)
+            if name:
+                put("meta_header.sender.name", name, fld)
+            for key, part in address.items():
+                put(f"meta_header.sender.{key}", part, fld)
         elif fld.target == "subject_address" and legal is not None:
             for key, part in parse_address(fld.entry).items():
                 put(f"bodies.legal_body.subject_address.{key}", part, fld)
