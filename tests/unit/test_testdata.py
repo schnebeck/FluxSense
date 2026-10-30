@@ -134,12 +134,14 @@ def test_offline_stages_on_generated_documents(docset: Dict[str, Any]) -> None:
             lines = [line for p in pages for line in p.sources.get("native", "").splitlines()]
             if doc["doc_date"] and type_name == "APPLICATION":
                 assert contract.form_signature_dates(lines) == [doc["doc_date"]]
+            elif doc["doc_date"] and type_name == "CONTRACT":
+                assert contract.date_line_dates(lines) == [doc["doc_date"]]
             elif doc["doc_date"] and contract.date_labels(type_name):
                 hits = contract.find_labelled("date", contract.date_labels(type_name), lines)
                 assert hits and hits[0].value == doc["doc_date"], (entry["path"], [h.value for h in hits])
             if doc["doc_number"]:
                 assert contract.own_number_hits(type_name, lines)[0].value == doc["doc_number"], entry["path"]
-            if doc["recipient"] and type_name not in ("APPLICATION",):
+            if doc["recipient"] and type_name not in ("APPLICATION", "CONTRACT"):  # no address window printed
                 window = recipient_from_window(analyze(pages[0]).address_window)
                 assert window and (window.get("name") or window.get("company")) == doc["recipient"], entry["path"]
             if doc["iban"]:

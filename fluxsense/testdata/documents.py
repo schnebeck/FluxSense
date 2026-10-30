@@ -743,6 +743,65 @@ def build_private_note(rng: random.Random, card: Optional[bool] = None) -> Logic
     return LogicalDoc("note", ["NOTE"], [page], _empty_truth(), summary=summary)
 
 
+def build_contract(rng: random.Random, start: date, signed: date, signature_text: Optional[str] = None,
+                   amendment: Optional[date] = None) -> LogicalDoc:
+    """
+    A two-page rental contract: landlord letterhead, contract number, start
+    printed with a two-digit year ('Mietbeginn: ab 1.10.24'), rent, and a
+    signing line 'Ort, den d/m/yy' in a typewriter-like hand. With an
+    amendment date the document is a later amendment ('Nachtrag') to the
+    contract that started on `start`.
+
+    Args:
+        rng: Random source (parties, numbers).
+        start: Contract start (effective date).
+        signed: Signing date (the doc_date), or the amendment date.
+        signature_text: Text printed for the signing date instead of 'd/m/yy' (e.g. an OCR misreading).
+        amendment: Date of a later amendment; the document is then that amendment.
+
+    Returns:
+        LogicalDoc (doc_types CONTRACT; facts: effective_date, signed, contract_number, start_text).
+    """
+    landlord = organisation(rng, ["Beispiel Immobilien", "Muster Wohnbau"])
+    tenant = person(rng)
+    number = f"MV-{rng.randint(10000, 99999)}"
+    doc_date = amendment or signed
+    start_text = f"{start.day}.{start.month}.{start.year % 100:02d}"
+    first, second = Page(), Page()
+    _letterhead(first, landlord)
+    title = "Nachtrag Nr. 1 zum Mietvertrag" if amendment else "Mietvertrag über Wohnraum"
+    first.text(LEFT, 110, title, 14, bold=True)
+    lines = [f"Vertragsnummer: {number}", f"zwischen {landlord.name}, {landlord.address.one_line()} (Vermieter)",
+             f"und {tenant.name}, {tenant.address.one_line()} (Mieter)", "",
+             f"§ 1 Mietbeginn: Das Mietverhältnis beginnt ab {start_text} und läuft auf unbestimmte Zeit.",
+             f"§ 2 Miete: Die monatliche Miete beträgt {ids.fmt_de(ids.money(rng, 45000, 140000))} EUR.",
+             "§ 3 Kaution: Die Kaution beträgt drei Monatsmieten."]
+    if amendment:
+        lines += ["", f"§ 4 Nachtrag: Ab {ids.fmt_date_de(amendment)} wird ein Stellplatz mitvermietet."]
+    y = 140.0
+    for line in lines:
+        for part in wrap(line, RIGHT - LEFT, 10) if line else [""]:
+            if part:
+                first.text(LEFT, y, part, 10)
+            y += 14
+    _footer(first, landlord, (1, 2))
+    second.text(LEFT, 80, "§ 5 Schlussbestimmungen: Änderungen bedürfen der Schriftform.", 10)
+    signing = signature_text or f"{doc_date.day}/{doc_date.month}/{doc_date.year % 100:02d}"
+    second.text(LEFT, 160, f"{landlord.address.city}, den {signing}", 11, mono=True)
+    signature(second, LEFT, 200, rng.randint(0, 999))
+    signature(second, 330, 200, rng.randint(0, 999))
+    second.text(LEFT, 215, "Vermieter", 8)
+    second.text(330, 215, "Mieter", 8)
+    _footer(second, landlord, (2, 2))
+    truth = _empty_truth()
+    truth.update({"sender": landlord.name, "recipient": tenant.name, "doc_date": doc_date.isoformat(), "doc_number": number})
+    doc = LogicalDoc("contract", ["CONTRACT"], [first, second], truth, summary=title)
+    doc.visual["has_signature"] = True
+    doc.facts.update({"effective_date": start.isoformat(), "start_text": f"ab {start_text}", "contract_number": number,
+                      "signing_line": f"{landlord.address.city}, den {signing}"})
+    return doc
+
+
 def build_stack(rng: random.Random) -> List[LogicalDoc]:
     """A letter with its terms page, followed by a separate enclosure (segmentation test)."""
     letter = build_letter(rng, official=False)
