@@ -394,6 +394,40 @@ def complete_capped_values(layer: TextLayer, pages: List[int], fields: Dict[str,
     return checks
 
 
+
+def flag_capped_unbacked(fields: Dict[str, Any], path: str = "") -> List[CheckResult]:
+    """
+    Code and prose values carry no evidence, so complete_capped_values never
+    sees them. A string that is exactly as long as its schema cap was most
+    likely cut by the grammar; nothing printed can complete it, so it is
+    flagged.
+
+    Args:
+        fields: Clean fields (or a nested part of them).
+        path: Dotted path of `fields`.
+
+    Returns:
+        WARNING checks for values that may be truncated.
+    """
+    from fluxsense.grounding.evidence import MAX_LENGTH_BY_KIND, field_kind
+    from fluxsense.grounding.matcher import KIND_CODE, KIND_PROSE
+    checks: List[CheckResult] = []
+    items = fields.items() if isinstance(fields, dict) else enumerate(fields) if isinstance(fields, list) else []
+    for key, value in items:
+        child = f"{path}.{key}" if path else str(key)
+        if isinstance(value, (dict, list)):
+            checks += flag_capped_unbacked(value, child)
+            continue
+        if not isinstance(key, str) or not isinstance(value, str):
+            continue
+        kind = field_kind(key, str)
+        cap = MAX_LENGTH_BY_KIND.get(kind)
+        if kind in (KIND_CODE, KIND_PROSE) and cap is not None and len(value) == cap:
+            checks.append(CheckResult(check_id="grounding.possibly_truncated", rule="grounding", status=CheckStatus.FAIL,
+                                      severity=Severity.WARNING, field=child, actual=value,
+                                      message=f"value reached the {cap}-character cap and may be truncated"))
+    return checks
+
 # Values the field contract derives instead of copying (§8: period_start = the day after the previous statement date):
 # never snapped onto a nearby printed date.
 DERIVED_PATHS: Tuple[str, ...] = ("bodies.statement_body.period_start",)
@@ -581,7 +615,8 @@ class GroundingHarness:
         snaps = snap_ibans(layer, pages, fields, evidence, specs) + snap_ungrounded(layer, pages, fields, evidence)
         scan_pages = {p for p in pages if layer.page(p) and (len(layer.page(p).sources.get("native", "").strip()) < 50
                                                             or layer.page(p).native_ocr)}
-        checks = self.ground_tables(layer, pages, tables, specs) + complete_capped_values(layer, pages, fields, evidence)
+        checks = (self.ground_tables(layer, pages, tables, specs) + complete_capped_values(layer, pages, fields, evidence)
+                  + flag_capped_unbacked(fields))
         self._ocr_pages = {p for p in pages if layer.page(p) is not None and layer.page(p).native_ocr}
         candidates = self._candidates(evidence, failed_fields) if cfg.enabled else []
         scan_names = [e for e in evidence if is_party_field(e) and e.path.split(".")[-1] in PARTY_NAME_FIELDS

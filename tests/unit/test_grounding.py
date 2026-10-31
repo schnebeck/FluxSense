@@ -387,3 +387,16 @@ def test_irregularly_grouped_iban_is_found() -> None:
     assert printed_ibans("Account DE44 990 123 45 0532013000 Swift Code: MUSTDEFF") == ["DE44990123450532013000"]
     assert printed_ibans("DE44 9901 2345 0532 0130 00") == ["DE44990123450532013000"]
     assert printed_ibans("DE12 3456 7890 1234 5678 90") == []
+
+
+def test_capped_prose_and_code_values_are_flagged() -> None:
+    """Values without evidence that end exactly at their cap are flagged; shorter ones are not."""
+    from fluxsense.grounding.evidence import MAX_LENGTH_BY_KIND
+    from fluxsense.grounding.harness import flag_capped_unbacked
+    prose, code = MAX_LENGTH_BY_KIND["prose"], MAX_LENGTH_BY_KIND["code"]
+    fields = {"bodies": {"correspondence_body": {"summary": "x" * prose, "requested_action": "Bitte zahlen."},
+                         "finance_body": {"line_items": [{"unit": "u" * code}, {"unit": "Stk"}]}}}
+    checks = flag_capped_unbacked(fields)
+    assert sorted(c.field for c in checks) == ["bodies.correspondence_body.summary", "bodies.finance_body.line_items.0.unit"]
+    assert all(c.check_id == "grounding.possibly_truncated" for c in checks)
+    assert flag_capped_unbacked({"bodies": {"correspondence_body": {"summary": "Kurz."}}}) == []

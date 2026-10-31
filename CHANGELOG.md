@@ -48,6 +48,10 @@
   schema cap is now 1200 characters instead of the 80-character cap of
   code values, so summaries are no longer cut mid-sentence. As before they
   carry no evidence and are not grounded.
+- Code and free-text values (no evidence) that end exactly at their schema
+  cap get the WARNING `grounding.possibly_truncated`, like copied values
+  that cannot be completed from the text layer; before, such a cut was
+  silent.
 - Letter deadlines: `bis zum` / `bis` count as a deadline label only on a
   line that asks the recipient to act; an offer's validity date is no
   longer auto-accepted as a deadline.
