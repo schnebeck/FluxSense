@@ -146,6 +146,20 @@ def test_string_fields_are_length_capped() -> None:
     assert schema["properties"]["payment_terms"]["maxLength"] == 400
 
 
+def test_model_written_prose_is_not_cut_at_code_length() -> None:
+    """A summary is free text: long cap, and no evidence entry (it is never printed verbatim)."""
+    from fluxsense.grounding.evidence import Unwrapped, build_plan, unwrap, wire_schema
+    from fluxsense.models.semantic import CorrespondenceBody
+    plan = build_plan(CorrespondenceBody)
+    schema = wire_schema(plan)
+    assert schema["properties"]["summary"]["maxLength"] >= 1000
+    assert schema["properties"]["requested_action"]["maxLength"] >= 1000
+    text = "Der Absender kuendigt eine Preisanpassung zum naechsten Quartal an und bittet um Bestaetigung. " * 3
+    out = Unwrapped(None)
+    assert unwrap(plan, {"summary": text}, "correspondence_body", out)["summary"] == text
+    assert not any(e.path.endswith("summary") for e in out.evidence)
+
+
 def test_unreachable_backend_fails_fast() -> None:
     """A refused connection raises BackendUnreachable at once (no transport retries, no sleeps)."""
     import time

@@ -26,14 +26,16 @@ from pydantic import BaseModel
 
 from fluxsense.catalog.registry import TableSpec
 from fluxsense.grounding.matcher import (KIND_AMOUNT, KIND_CODE, KIND_DATE, KIND_IBAN, KIND_IDENTIFIER, KIND_INTEGER,
-                                         KIND_TEXT)
+                                         KIND_PROSE, KIND_TEXT)
 from fluxsense.models.result import FieldEvidence
 
 CODE_FIELDS: frozenset = frozenset({
     "currency", "country", "language", "unit", "tax_category", "statement_type", "category", "frequency",
-    "contract_type", "transaction_type", "anchor_type", "anchor_scope", "ref_type", "summary",
-    "requested_action", "next_billing_date", "is_recurring", "source_page", "certified_event", "mutual_waiver",
+    "contract_type", "transaction_type", "anchor_type", "anchor_scope", "ref_type",
+    "next_billing_date", "is_recurring", "source_page", "certified_event", "mutual_waiver",
 })
+# Free text the model writes itself (sentences, not copied values): long cap, no evidence, no grounding.
+PROSE_FIELDS: frozenset = frozenset({"summary", "requested_action"})
 DATE_FIELDS: frozenset = frozenset({"service_period_start", "service_period_end", "period_start", "period_end",
                                     "valid_until", "deadline", "pay_period_start", "pay_period_end", "event_end_date"})
 IDENT_FIELDS: frozenset = frozenset({"bic", "vat_id", "tax_id", "pos", "zip_code", "house_number", "phone", "email",
@@ -69,6 +71,8 @@ def field_kind(name: str, annotation: Any) -> str:
     Returns:
         One of the KIND_* constants.
     """
+    if name in PROSE_FIELDS:
+        return KIND_PROSE
     if name in CODE_FIELDS or annotation is bool:
         return KIND_CODE
     if annotation is Decimal or annotation is float:
@@ -189,7 +193,8 @@ def build_plan(model: Type[BaseModel], in_row: bool = False, tables: Optional[Di
 
 # Caps only stop runaway generation; they are far above real values. A value that reaches its cap is treated as
 # possibly truncated (completed from the text layer or flagged) - identifiers are never cut silently.
-MAX_LENGTH_BY_KIND: Dict[str, int] = {KIND_IDENTIFIER: 96, KIND_IBAN: 48, KIND_DATE: 24, KIND_CODE: 80, KIND_TEXT: 400}
+MAX_LENGTH_BY_KIND: Dict[str, int] = {KIND_IDENTIFIER: 96, KIND_IBAN: 48, KIND_DATE: 24, KIND_CODE: 80, KIND_TEXT: 400,
+                                       KIND_PROSE: 1200}
 
 
 def _scalar_schema(node: Scalar) -> Dict[str, Any]:
@@ -331,7 +336,7 @@ def unwrap(node: Any, wire: Any, path: str, out: Unwrapped, evidence_chars: int 
                 bbox = [float(x) for x in raw_bbox]
         if value is None or value == "":
             return None
-        if node.kind != KIND_CODE:
+        if node.kind not in (KIND_CODE, KIND_PROSE):
             out.evidence.append(FieldEvidence(path=path, kind=node.kind, value=value, page=page,
                                               evidence=snippet, bbox=bbox, line=line))
         return value

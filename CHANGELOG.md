@@ -44,6 +44,10 @@
   §4 label of that number other than the last-resort `Kundennummer`, and
   no higher-ranked printed label shows another number; a customer-number
   field is no longer auto-accepted as a form's doc_number.
+- Letter `summary` and `requested_action` are model-written free text: their
+  schema cap is now 1200 characters instead of the 80-character cap of
+  code values, so summaries are no longer cut mid-sentence. As before they
+  carry no evidence and are not grounded.
 - Letter deadlines: `bis zum` / `bis` count as a deadline label only on a
   line that asks the recipient to act; an offer's validity date is no
   longer auto-accepted as a deadline.

@@ -32,6 +32,7 @@ KIND_IDENTIFIER: str = "identifier"
 KIND_TEXT: str = "text"
 KIND_INTEGER: str = "integer"
 KIND_CODE: str = "code"
+KIND_PROSE: str = "prose"  # model-written free text (summaries): not copied, so never grounded
 CHECKED_KINDS: frozenset = frozenset({KIND_AMOUNT, KIND_DATE, KIND_IBAN, KIND_IDENTIFIER, KIND_TEXT, KIND_INTEGER})
 
 
