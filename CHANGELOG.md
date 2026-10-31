@@ -2,6 +2,12 @@
 
 ## 0.2.0 - 2026-10-31
 
+- Field contract 1.9, §13.1: page texts hold no control characters. Line
+  and page breaks (CR / CRLF, form feed, vertical tab, Unicode line
+  separators) become `\n`, tabs a space, all other control characters plus
+  BOM, zero-width space and word joiner are removed when the text layer is
+  built, so `raw`, `clean`, `corrected`, word boxes, blocks and layout items
+  agree. `raw` stays line-based; running text on one line is `clean`.
 - Field contract 1.8, §13: text levels per page (`raw`, `clean` -
   dehyphenated, soft hyphens removed, running text reflowed to paragraphs,
   addresses / tables / lists line-based - and `corrected` with the

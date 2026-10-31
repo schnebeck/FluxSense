@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from fluxsense.config import Settings
 from fluxsense.extract import docling_engine
-from fluxsense.extract.base import SOURCE_DOCLING, SOURCE_NATIVE, PageText, TextLayer
+from fluxsense.extract.base import SOURCE_DOCLING, SOURCE_NATIVE, PageText, TextLayer, strip_layer_controls
 from fluxsense.extract.native import has_font_resources, read_pages
 from fluxsense.extract.ocr import OcrError, run_ocrmypdf
 from fluxsense.log import get_logger
@@ -149,6 +149,7 @@ def build_text_layer(pdf_path: Path, settings: Settings, engine: Optional[str] =
             logger.warning(f"OCR failed for {pdf_path.name}: {e}")
         timings["ocrmypdf"] = round(time.monotonic() - start, 3)
 
+    strip_layer_controls(layer)
     attach_stream(layer)
     layer.timings = timings
     return layer

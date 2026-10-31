@@ -415,3 +415,20 @@ def test_corrections_are_located_and_overlaps_keep_the_strongest_evidence() -> N
                    TextCorrection(page=1, before="Tur", after="Tür", evidence_kind="dictionary")]
     assert apply_corrections("Tur am Hous", corrections) == "Tür am House"
     assert [(c.before, c.offset, c.evidence_kind) for c in corrections] == [("Tur", 0, "dictionary"), ("Hous", 7, "human")]
+
+
+def test_page_text_has_no_control_characters() -> None:
+    """Form feeds, CR and other control characters never reach the text levels; lines stay lines."""
+    from fluxsense.extract.base import Word, strip_controls, strip_layer_controls
+    from fluxsense.text.levels import page_levels
+    assert strip_controls("Seite 1\r\nvon 2\n\n\x0c") == "Seite 1\nvon 2\n\n\n"
+    assert strip_controls("A\tB\x00C\ufeffD\u2028E") == "A BCD\nE"
+    assert strip_controls("Muster\u00adstadt") == "Muster\u00adstadt"  # soft hyphen: removed in 'clean' only
+    page = PageText(page=1, sources={"native": "Rechnung\r\nNr. 4711\x0c"}, words=[Word(0, 0, 10, 10, "4711\x0c")],
+                    blocks=[(0, 0, 10, 10, "Rechnung\x0c")], items=[LayoutItem(1, (0, 0, 10, 10), "text", "Rechnung\x0c")])
+    strip_layer_controls(TextLayer(pages=[page], engine="native"))
+    assert page.sources["native"] == "Rechnung\nNr. 4711\n"
+    assert page.words[0].text == "4711" and page.blocks[0][4] == "Rechnung\n" and page.items[0].content == "Rechnung\n"
+    late = PageText(page=2, sources={"ovis": "Zeile\x0b eins\x07"})
+    out = page_levels(late)
+    assert out.text == "Zeile\n eins" and "\x07" not in out.clean

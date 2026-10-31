@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from fluxsense.grounding.normalize import compact, parse_date
 
-CONTRACT_VERSION: str = "1.8"
+CONTRACT_VERSION: str = "1.9"
 
 
 @dataclass(frozen=True)

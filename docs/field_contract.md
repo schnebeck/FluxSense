@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.8 (2026-10-30). This contract defines what each core field of a
+Version 1.9 (2026-10-31). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -409,8 +409,12 @@ on").
 With `include_page_text` every page has three levels
 (`text_layer.pages[]`):
 
-- `text` (`raw`): the text as read, verbatim and unchanged; evidence
-  pointers and snippets reference it.
+- `text` (`raw`): the text as read, line-based and otherwise unchanged;
+  evidence pointers and snippets reference it. It holds no control
+  characters: CR / CRLF, form feed, vertical tab and Unicode line
+  separators become a line break, a tab a space; every other control
+  character (and BOM, zero-width space, word joiner) is removed when the
+  text layer is built. Soft hyphens stay (`clean` removes them).
 - `clean`: line-break hyphenation joined (only before a lowercase
   continuation, so `Musterstadt-\nLinden` stays), soft hyphens removed,
   running text reflowed to one line per paragraph - judged per layout item

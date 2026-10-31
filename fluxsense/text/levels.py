@@ -7,11 +7,11 @@ File:           fluxsense/text/levels.py
 Version:        0.1.0
 Producer:       thorsten.schnebeck@gmx.net
 Generator:      Claude Opus 5.5
-Description:    Text levels of a page. 'raw' is the text as read (verbatim;
-                evidence pointers keep referencing it). 'clean' joins
-                line-break hyphenation (lowercase continuation only, so
-                compounds such as 'Musterstadt-Linden' stay), removes soft
-                hyphens and reflows running text to paragraphs - judged per
+Description:    Text levels of a page. 'raw' is the text as read (line-based,
+                no control characters; evidence pointers keep referencing
+                it). 'clean' joins line-break hyphenation (lowercase
+                continuation only, so compounds such as
+                'Musterstadt-Linden' stay), removes soft hyphens and reflows running text to paragraphs - judged per
                 layout item (or per blank-line paragraph without layout):
                 address blocks, table rows, lists, short lines and header /
                 footer stay line-based. 'corrected' is clean plus the
@@ -23,7 +23,7 @@ Description:    Text levels of a page. 'raw' is the text as read (verbatim;
 import re
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set
 
-from fluxsense.extract.base import PageText
+from fluxsense.extract.base import PageText, strip_controls
 from fluxsense.grounding.normalize import dehyphenate
 from fluxsense.layout.items import TEXT
 from fluxsense.models.result import PageTextOut, TextCorrection
@@ -144,7 +144,7 @@ def page_levels(page: PageText, lookup: Optional[Callable[[Sequence[str]], Dict[
         corrected by the OCR rules (only human confirmations apply).
     """
     from fluxsense.text.correct import format_corrections, word_corrections
-    raw = page.best_text()
+    raw = strip_controls(page.best_text())  # sources added after the text layer was built are covered too
     clean = clean_text(page, raw)
     pending = [c for c in list(corrections) + list(page.corrections) if isinstance(c, TextCorrection)]
     if page.scanned():
