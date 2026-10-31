@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - 2026-10-31
+## 0.3.0 - 2026-10-31
 
 - Field contract 1.10, §14: new type `POWER_OF_ATTORNEY` (Vollmacht,
   Vorsorge-, General-, Bank-, Unter-, Prozessvollmacht) with
@@ -20,6 +20,25 @@
   BOM, zero-width space and word joiner are removed when the text layer is
   built, so `raw`, `clean`, `corrected`, word boxes, blocks and layout items
   agree. `raw` stays line-based; running text on one line is `clean`.
+- Letter `summary` and `requested_action` are model-written free text: their
+  schema cap is now 1200 characters instead of the 80-character cap of
+  code values, so summaries are no longer cut mid-sentence. As before they
+  carry no evidence and are not grounded.
+- Code and free-text values (no evidence) that end exactly at their schema
+  cap get the WARNING `grounding.possibly_truncated`, like copied values
+  that cannot be completed from the text layer; before, such a cut was
+  silent.
+- A number read from a form field (doc_number, invoice / statement number)
+  has provenance `label` only when the field's printed label is a listed
+  §4 label of that number other than the last-resort `Kundennummer`, and
+  no higher-ranked printed label shows another number; a customer-number
+  field is no longer auto-accepted as a form's doc_number.
+- Dictionary word correction (`text.spell_check`) is off by default; names
+  read the same way twice in a document and words under five letters are
+  never touched.
+
+## 0.2.0 - 2026-10-31
+
 - Field contract 1.8, §13: text levels per page (`raw`, `clean` -
   dehyphenated, soft hyphens removed, running text reflowed to paragraphs,
   addresses / tables / lists line-based - and `corrected` with the
@@ -57,19 +76,6 @@
   agrees with may be auto-accepted again. Native AcroForm fields of
   digital PDFs are read from their widgets without vision. The readings
   are output as `form_fields[]`.
-- A number read from a form field (doc_number, invoice / statement number)
-  has provenance `label` only when the field's printed label is a listed
-  §4 label of that number other than the last-resort `Kundennummer`, and
-  no higher-ranked printed label shows another number; a customer-number
-  field is no longer auto-accepted as a form's doc_number.
-- Letter `summary` and `requested_action` are model-written free text: their
-  schema cap is now 1200 characters instead of the 80-character cap of
-  code values, so summaries are no longer cut mid-sentence. As before they
-  carry no evidence and are not grounded.
-- Code and free-text values (no evidence) that end exactly at their schema
-  cap get the WARNING `grounding.possibly_truncated`, like copied values
-  that cannot be completed from the text layer; before, such a cut was
-  silent.
 - Letter deadlines: `bis zum` / `bis` count as a deadline label only on a
   line that asks the recipient to act; an offer's validity date is no
   longer auto-accepted as a deadline.

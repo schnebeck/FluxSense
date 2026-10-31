@@ -11,7 +11,7 @@ Description:    FluxSense package root: semantic PDF analysis on local AI.
 ------------------------------------------------------------------------------
 """
 
-__version__: str = "0.2.0"
+__version__: str = "0.3.0"
 
 # Version of the output schema (AnalysisResult). Bump on breaking changes.
 SCHEMA_VERSION: str = "1.0"
