@@ -39,6 +39,11 @@
   agrees with may be auto-accepted again. Native AcroForm fields of
   digital PDFs are read from their widgets without vision. The readings
   are output as `form_fields[]`.
+- A number read from a form field (doc_number, invoice / statement number)
+  has provenance `label` only when the field's printed label is a listed
+  §4 label of that number other than the last-resort `Kundennummer`, and
+  no higher-ranked printed label shows another number; a customer-number
+  field is no longer auto-accepted as a form's doc_number.
 - Letter deadlines: `bis zum` / `bis` count as a deadline label only on a
   line that asks the recipient to act; an offer's validity date is no
   longer auto-accepted as a deadline.

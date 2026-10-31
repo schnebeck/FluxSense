@@ -314,7 +314,11 @@ each printed label is read on its own:
   readings).
 - The readings form a FORM FIELDS block of the page text for the
   extraction (to be mapped first) and a `fieldread` text source for
-  grounding; a value equal to a reading has provenance `label`, but a
+  grounding; a value equal to a reading has provenance `label` (a number -
+  doc_number, invoice / statement number - only when the field's printed
+  label is a listed §4 label of that number other than the last-resort
+  `Kundennummer` and no higher-ranked printed label shows another number;
+  the reader sees its own label only), but a
   handwritten reading alone is never auto-accepted ("handwritten form
   field (single reading)"): it needs an independent second reading with
   the same value printed in the page's digital text layer - OCR-derived

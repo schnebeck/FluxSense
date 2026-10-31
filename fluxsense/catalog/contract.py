@@ -141,6 +141,9 @@ AUTHORITY_RE = re.compile(r"(gericht|schlichtung|ombuds|behörde|behoerde|staats
 OWN_NUMBER_LABELS: Tuple[str, ...] = ("Protokoll-Nr.", "Dokument-Nr.", "Bericht-Nr.", "Report No")
 # Labels of numbers that are never a statement's doc_number (§4: account/card/customer numbers on statements).
 STATEMENT_FOREIGN_NUMBER_LABELS: Tuple[str, ...] = ("Kundennummer", "Kontonummer", "Kartennummer")
+# §4/§12: last-resort number labels (the customer's account, not the document); a form-field reading under one of
+# them is no label provenance for a number (the reader sees its own label only, not a higher-ranked printed number).
+FALLBACK_NUMBER_LABELS: Tuple[str, ...] = ("Kundennummer",)
 
 
 # Labels of the other core fields (§5-§8 describe them in prose); a value printed after one of them on the same

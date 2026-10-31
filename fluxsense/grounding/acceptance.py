@@ -38,7 +38,7 @@ from fluxsense.catalog.contract import (DATE_TOKEN_RE, FIELD_LABELS, FIRST_PAGE_
                                         subject_context, HEADER_ONLY_NUMBER_LABELS, ORDERING_CUSTOMER_LABELS, PAYEE_LABELS,
                                         form_signature_dates, geometry_policy, is_name_fragment, labelled_values, party_problem,
                                         derived_period_value, previous_statement_days, printed_period_pairs,
-                                        DEADLINE_CONTEXT_LABELS, DEADLINE_DUTY_RE)
+                                        DEADLINE_CONTEXT_LABELS, DEADLINE_DUTY_RE, FALLBACK_NUMBER_LABELS)
 from fluxsense.extract.base import TextLayer
 from fluxsense.formats import valid_tax_id
 from fluxsense.formats.iban import iban_valid
@@ -108,6 +108,22 @@ def fieldread_readings(layer: TextLayer, pages: Sequence[int]) -> Dict[str, Set[
                 values[kind].add(part.strip())
             values[kind] |= {p.strip() for p in re.split(r"[;\n]", entry) if p.strip()}
     return values
+
+
+def fieldread_labels(layer: TextLayer, pages: Sequence[int]) -> Dict[str, Set[str]]:
+    """Printed labels of the FORM FIELDS readings by compacted entry (and ISO date)."""
+    labels: Dict[str, Set[str]] = {}
+    for number in pages:
+        page = layer.page(number)
+        for line in ((page.sources.get("fieldread") or "") if page else "").splitlines():
+            label, _, entry = re.sub(r"^\[[^\]]+\]\s*", "", line).partition(": ")
+            entry = re.sub(r"\s*\(readings: .*\)$", "", entry)
+            if not entry or entry.startswith("("):
+                continue
+            for part in entry.split(" -> ") + re.split(r"[;\n]", entry):
+                if part.strip():
+                    labels.setdefault(compact(part.strip()), set()).add(label.strip())
+    return labels
 
 
 def fieldread_values(layer: TextLayer, pages: Sequence[int]) -> Set[str]:
@@ -315,6 +331,7 @@ class Assessor:
         self.lines = [line for p in pages for line in self.page_lines.get(p, [])]
         self.readings = fieldread_readings(layer, pages)
         self.fieldread = set().union(*self.readings.values())
+        self.reading_labels = fieldread_labels(layer, pages)
         self._independent: Optional[Dict[int, Any]] = None
         self._ocr: Optional[Dict[int, Any]] = None
         self._agreed: Optional[Dict[int, Any]] = None
@@ -522,7 +539,7 @@ class Assessor:
         label = self._label(ev)
         if label:
             return LABEL, label
-        if ev.status == GroundingStatus.GROUNDED and self._field_reading(ev):
+        if ev.status == GroundingStatus.GROUNDED and self._field_reading(ev) and self._number_reading_fits(ev):
             return LABEL, "read from the crop of its printed form label (§12)"
         geometry = self._geometry(ev)
         if geometry:
@@ -534,6 +551,25 @@ class Assessor:
         if ev.matched_source == "fieldread":
             return True
         return self._reading_in(ev, self.fieldread)
+
+    def _number_reading_fits(self, ev: FieldEvidence) -> bool:
+        """
+        §4/§12: a number read from a form field counts as labelled only under a
+        listed label of that number above the last-resort ones ('Kundennummer'
+        names the customer's account) and when no higher-ranked printed label
+        shows another number. Other fields: any reading.
+        """
+        if ev.path not in NUMBER_PATHS:
+            return True
+        if ev.path in self.outranked:
+            return False
+        name = ev.path.split(".")[-1]
+        labels = number_labels(self.type_name) if ev.path == "meta_header.doc_number" else FIELD_LABELS[name]
+        if ev.path == "meta_header.doc_number" and self.contract.number_group == "statement":
+            labels = FIELD_LABELS["statement_number"]
+        listed = [compiled(label, compound_head=True) for label in labels if label not in FALLBACK_NUMBER_LABELS]
+        printed = self.reading_labels.get(compact(str(ev.value)), set())
+        return any(pattern.search(label) for label in printed for pattern in listed)
 
     @staticmethod
     def _reading_in(ev: FieldEvidence, values: Set[str]) -> bool:

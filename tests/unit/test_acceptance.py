@@ -368,6 +368,20 @@ def test_party_labels_form_issuer_and_same_party_rank() -> None:
     assert evidence[0].provenance == "label"
 
 
+def test_number_from_a_form_field_needs_a_listed_label_above_the_customer_number() -> None:
+    """§4/§12: a form's doc_number read from a form field counts as labelled only under a listed number label; a
+    'Kundennummer' field (last resort) or an unrelated field ('Telefon') leaves it to review."""
+    lines = ["Musterstadt Energie GmbH", "418207", "| Auftrag | 730552 |", "Ort, Datum"]
+    path = "meta_header.doc_number"
+    for label, accepted in (("Kundennummer", False), ("Telefon", False), ("Antragsnummer", True)):
+        layer = _layer(lines)
+        layer.pages[0].sources["fieldread"] = f"[typed] {label}: 418207"
+        evidence = [_ev(path, "identifier", "418207")]
+        assess({"meta_header": {"doc_number": "418207"}}, evidence, layer, [1], "APPLICATION", [])
+        assert (evidence[0].provenance == "label") is accepted, label
+        assert evidence[0].auto_accepted is accepted, label
+
+
 def test_deadline_label_needs_a_request_to_act() -> None:
     """'bis zum <Datum>' labels a letter's deadline only where the recipient is asked to act; an offer's validity
     ('gilt bei Buchung bis zum ...') is no deadline label."""
