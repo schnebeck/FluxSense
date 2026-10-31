@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.1 - 2026-10-31
+
+- Postcode and town in one field are separated after the extraction: a
+  `zip_code` '00512 Probehausen' becomes '00512' and fills an empty `city`, a
+  `city` '00512 Probehausen' becomes 'Probehausen' and fills an empty `zip_code`
+  (parties, addresses, persons, table rows; DE five digits, AT / CH four
+  digits, optional `D-` / `A-` / `CH-` prefix). A different city and other
+  countries' postcodes are kept; the evidence follows the new value.
+
 ## 0.3.0 - 2026-10-31
 
 - Field contract 1.10, §14: new type `POWER_OF_ATTORNEY` (Vollmacht,

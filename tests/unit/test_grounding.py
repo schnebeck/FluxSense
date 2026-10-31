@@ -400,3 +400,32 @@ def test_capped_prose_and_code_values_are_flagged() -> None:
     assert sorted(c.field for c in checks) == ["bodies.correspondence_body.summary", "bodies.finance_body.line_items.0.unit"]
     assert all(c.check_id == "grounding.possibly_truncated" for c in checks)
     assert flag_capped_unbacked({"bodies": {"correspondence_body": {"summary": "Kurz."}}}) == []
+
+
+def test_postcode_and_town_in_one_field_are_separated(settings: Any) -> None:
+    """'00512 Probehausen' in zip_code (or city) is split; foreign postcodes and a different city stay; evidence follows."""
+    from fluxsense.catalog.builtin import default_catalog
+    from fluxsense.grounding.normalize import split_postcode_town
+    from fluxsense.stages.extract import Extractor
+    party = {"zip_code": "00512 Probehausen", "city": "Probehausen"}
+    assert split_postcode_town(party) == {"zip_code": "00512"} and party == {"zip_code": "00512", "city": "Probehausen"}
+    party = {"city": "D-00512 Probehausen"}
+    assert split_postcode_town(party) and party == {"city": "Probehausen", "zip_code": "00512"}
+    for kept in ({"zip_code": "1234 AB", "country": "NL"}, {"zip_code": "1234 AB Exempeldorf"},
+                 {"zip_code": "00512", "city": "Probehausen"}):
+        assert split_postcode_town(dict(kept)) == {}
+    assert split_postcode_town({"zip_code": "0100 Beispielfeld", "country": "AT"}) == \
+        {"zip_code": "0100", "city": "Beispielfeld"}
+    party = {"zip_code": "00512 Probehausen", "city": "Probehausen-Nord"}
+    split_postcode_town(party)
+    assert party == {"zip_code": "00512", "city": "Probehausen-Nord"}
+    extractor = Extractor(None, settings, default_catalog())  # type: ignore[arg-type]
+    build = extractor.build([default_catalog().get("LETTER")], with_tables=False, identity_text="", audit=False)
+    wire = {"meta_header": {"sender": {"company": "Muster GmbH", "city": "Probehausen",
+                                       "zip_code": {"v": "00512 Probehausen", "p": 1, "e": "00512 Probehausen"}},
+                            "recipient": {"name": "Erika Beispiel", "city": "00345 Musterstadt"}}}
+    outcome = extractor._unwrap(build, wire, chunked=False)
+    meta = outcome.fields["meta_header"]
+    assert meta["sender"]["zip_code"] == "00512" and meta["sender"]["city"] == "Probehausen"
+    assert meta["recipient"] == {"name": "Erika Beispiel", "city": "Musterstadt", "zip_code": "00345"}
+    assert {e.path: e.value for e in outcome.evidence}["meta_header.sender.zip_code"] == "00512"

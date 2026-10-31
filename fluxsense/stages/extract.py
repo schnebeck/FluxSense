@@ -34,7 +34,7 @@ from fluxsense.catalog.registry import AUDIT_FULL, AUDIT_NONE, Catalog, TableSpe
 from fluxsense.config import Settings
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.evidence import Obj, Rows, Scalar, Unwrapped, build_plan, unwrap, wire_schema
-from fluxsense.grounding.normalize import dehyphenate
+from fluxsense.grounding.normalize import dehyphenate, split_postcode_town
 from fluxsense.grounding.pointer import native_pages, numbered_text, resolve_pointers
 from fluxsense.layout import din5008
 from fluxsense.llm import budget
@@ -672,6 +672,12 @@ class Extractor:
         clean.setdefault("meta_header", {})
         clean.setdefault("bodies", {})
         notes = self.sanitize(clean)
+        split = split_postcode_town(clean)
+        if split:
+            notes.append(f"postcode and town separated: {', '.join(sorted(split))}")
+            for ev in collector.evidence:
+                if ev.path in split:
+                    ev.value = split[ev.path]
         removed = 0
         for spec in build.table_specs:
             body = clean["bodies"].get(spec.body_key)

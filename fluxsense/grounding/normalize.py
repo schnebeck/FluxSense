@@ -18,7 +18,7 @@ import re
 import unicodedata
 from datetime import date
 from decimal import Decimal, InvalidOperation
-from typing import Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 CENT: Decimal = Decimal("0.01")
 
@@ -244,3 +244,66 @@ def dehyphenate(text: str) -> str:
         The joined text.
     """
     return _LINEBREAK_HYPHEN_RE.sub(r"\1\2", _SOFT_HYPHEN_RE.sub("", text))
+
+
+# Postcode and town in one field ('00512 Probehausen', 'D-00512 Probehausen', 'A-0100 Beispielfeld'):
+# DE 5 digits, AT / CH 4 digits.
+_POSTCODE_TOWN_RE = re.compile(r"^\s*(?:(D|A|CH)\s*-\s*)?(\d{4,5})\s*,?\s+([A-Za-zÄÖÜäöüß][^\d]*?)\s*$")
+_FOUR_DIGIT_COUNTRIES: Set[str] = {"A", "AT", "AUT", "ÖSTERREICH", "OESTERREICH", "AUSTRIA", "CH", "CHE", "SCHWEIZ",
+                                   "SWITZERLAND"}
+_FIVE_DIGIT_COUNTRIES: Set[str] = {"", "D", "DE", "DEU", "DEUTSCHLAND", "GERMANY"}
+
+
+def _postcode_town(value: object, country: object) -> Optional[Tuple[str, str]]:
+    """('00512', 'Probehausen') for '00512 Probehausen' (4 digits only for AT / CH, 5 for DE or no country), else None."""
+    match = _POSTCODE_TOWN_RE.match(str(value or ""))
+    if not match:
+        return None
+    prefix, digits, town = match.group(1), match.group(2), match.group(3).strip(" ,")
+    land = (prefix or str(country or "")).strip().upper()
+    allowed = _FOUR_DIGIT_COUNTRIES if len(digits) == 4 else _FIVE_DIGIT_COUNTRIES
+    if land not in allowed or len(town) < 2 or not (any(c.islower() for c in town) or len(town) >= 3):
+        return None
+    return digits, town
+
+
+def split_postcode_town(node: Any, path: str = "") -> Dict[str, str]:
+    """
+    Separates postcode and town that a model put into one field: a
+    `zip_code` '00512 Probehausen' becomes '00512' and fills an empty `city`; a
+    `city` '00512 Probehausen' becomes 'Probehausen' and fills an empty `zip_code`.
+    A city that differs from the town in the zip field is kept. Walks
+    every object of the fields (parties, addresses, persons, table rows).
+
+    Args:
+        node: Fields (or a part of them), changed in place.
+        path: Dotted path of `node`.
+
+    Returns:
+        Changed paths -> new value.
+    """
+    changed: Dict[str, str] = {}
+    if isinstance(node, list):
+        for index, item in enumerate(node):
+            changed.update(split_postcode_town(item, f"{path}.{index}" if path else str(index)))
+        return changed
+    if not isinstance(node, dict):
+        return changed
+    for key, value in node.items():
+        if isinstance(value, (dict, list)):
+            changed.update(split_postcode_town(value, f"{path}.{key}" if path else str(key)))
+    if "zip_code" not in node and "city" not in node:
+        return changed
+    prefix = f"{path}." if path else ""
+    zip_split = _postcode_town(node.get("zip_code"), node.get("country"))
+    if zip_split:
+        node["zip_code"] = changed[f"{prefix}zip_code"] = zip_split[0]
+        if not node.get("city"):
+            node["city"] = changed[f"{prefix}city"] = zip_split[1]
+    city_split = _postcode_town(node.get("city"), node.get("country"))
+    if city_split and node.get("zip_code") in (None, "", city_split[0]):
+        node["city"] = changed[f"{prefix}city"] = city_split[1]
+        if not node.get("zip_code"):
+            node["zip_code"] = changed[f"{prefix}zip_code"] = city_split[0]
+    return changed
+
