@@ -227,7 +227,9 @@ class LegalBody(BaseModel):
     contract_object: Optional[SubjectAddress] = Field(None, description="Object of the contract (rented property, vehicle)")
     certified_persons: List[str] = Field(default_factory=list, description="Certificate: the person(s) the confirmation is about")
     certified_event: Optional[str] = Field(None, description="Certificate: confirmed event, MUST be: MOVE_IN, MOVE_OUT, "
-                                                             "EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER")
+                                                             "EMPLOYMENT, MEMBERSHIP, COMPLETION (exam, Meister), BIRTH, "
+                                                             "MARRIAGE, DEATH, APPOINTMENT (Ernennung), AWARD "
+                                                             "(Verleihung), OTHER")
     event_date: Optional[str] = Field(None, description="Certificate: date of the confirmed event (YYYY-MM-DD)")
     event_end_date: Optional[str] = Field(None, description="Certificate: end of a confirmed period (YYYY-MM-DD)")
     subject_address: Optional[SubjectAddress] = Field(None, description="Certificate: the address the confirmation is about")

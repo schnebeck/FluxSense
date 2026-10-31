@@ -111,7 +111,8 @@ PAYMENT_QUESTIONS: Tuple[str, ...] = (
     "itself (empty for a plain 'gesetzliche Frist')?")
 CERTIFICATE_QUESTIONS: Tuple[str, ...] = (
     "Who issued the confirmation (landlord, employer, school, authority) and who is it about (certified_persons)?",
-    "Which event or fact is confirmed (certified_event: MOVE_IN, MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), "
+    "Which event or fact is confirmed (certified_event: MOVE_IN, MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, BIRTH, "
+    "MARRIAGE, DEATH, APPOINTMENT, AWARD, OTHER), "
     "on which date (event_date) or for which period (event_date .. event_end_date), and for which address "
     "(subject_address, with floor/position)? Handwritten entries on a printed form count.")
 
@@ -205,11 +206,11 @@ def build_catalog() -> Catalog:
                    "bodies.statement_body.total_debits", "bodies.statement_body.total_credits",
                    "bodies.statement_body.debit_count", "bodies.statement_body.credit_count")
     cat.register(TypeSpec(**STATEMENT_DOC_RULES,
-        name="BANK_STATEMENT", description="Kontoauszug, Depotauszug, Rechnungsabschluss of a bank account", body_key="statement_body",
+        name="BANK_STATEMENT", fold_audit=False, description="Kontoauszug, Depotauszug, Rechnungsabschluss of a bank account", body_key="statement_body",
         questions=STATEMENT_QUESTIONS, tables=(TRANSACTIONS,), rules=statement_rules, critical_fields=st_critical,
         required_fields=("bodies.statement_body.opening_balance", "bodies.statement_body.closing_balance")))
     cat.register(TypeSpec(**STATEMENT_DOC_RULES,
-        name="CREDIT_CARD_STATEMENT", kpf_type="BANK_STATEMENT", description="Kreditkartenabrechnung, Umsatzaufstellung of a credit card", body_key="statement_body",
+        name="CREDIT_CARD_STATEMENT", fold_audit=False, kpf_type="BANK_STATEMENT", description="Kreditkartenabrechnung, Umsatzaufstellung of a credit card", body_key="statement_body",
         questions=STATEMENT_QUESTIONS + ("Credit limit, minimum payment and payment due date?",),
         tables=(TRANSACTIONS,), rules=("statement.credit_card", "statement.period", "statement.totals", "iban", "dates", "completeness"),
         critical_fields=st_critical + ("bodies.statement_body.payment_due_date",),
@@ -228,7 +229,7 @@ def build_catalog() -> Catalog:
         critical_fields=("bodies.statement_body.iban", "bodies.statement_body.transactions.*.amount", "meta_header.doc_date"),
         audit_mode=AUDIT_STAMP))
     cat.register(TypeSpec(
-        name="PAYSLIP", description="Gehaltsabrechnung, Entgeltabrechnung, Lohnabrechnung, Bezügemitteilung", body_key="payslip_body",
+        name="PAYSLIP", fold_audit=False, description="Gehaltsabrechnung, Entgeltabrechnung, Lohnabrechnung, Bezügemitteilung", body_key="payslip_body",
         questions=("Employee, employee id, employer, pay period and payment date?",
                    "Gross pay, income tax, solidarity surcharge, church tax, total social security, statutory net pay, payout amount?",
                    "List every wage component and deduction with signed amount (earnings positive, deductions negative)."),
@@ -243,7 +244,8 @@ def build_catalog() -> Catalog:
         cat.register(_legal(name, desc, more=PAYMENT_QUESTIONS if name in ("CONTRACT", "INSURANCE_POLICY") else ()))
     cat.register(_legal("CERTIFICATE", "Zertifikat, Bescheinigung, Nachweis, Zeugnis, Konformitätserklärung; a confirmation of a "
                         "fact about a person issued by a third party (Wohnungsgeberbestätigung of a landlord, "
-                        "Arbeitgeberbescheinigung), also when filled in by hand on a printed form; test/inspection reports "
+                        "Arbeitgeberbescheinigung), also when filled in by hand on a printed form; an Urkunde (Geburts-, Heirats-, "
+                        "Sterbe-, Ernennungs-, Verleihungs-, Meister-, Prüfungsurkunde); test/inspection reports "
                         "(Prüfbericht, Testing report, Messprotokoll, Safety checks) with their check lists", audit=AUDIT_NONE,
                         more=CERTIFICATE_QUESTIONS))
     cat.register(_legal("OFFICIAL_LETTER", "Behördenschreiben, Bescheid (not Steuerbescheid), formal letter of a bank, insurer or company to the customer "

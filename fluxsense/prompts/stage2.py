@@ -78,7 +78,8 @@ Return ONLY valid JSON matching the schema, minified on ONE line (no newlines, n
 
 PROMPT_STAGE_2_AUDIT_STAMP = """
 ### 4.A FORENSIC AUDIT (STAMP LAYER, from KPaperFlux Stage 1.5)
-- Fill the `audit` object. Focus ONLY on stamps, handwriting and stickers on the pages.
+- Fill the `audit` object. Focus ONLY on stamps, seals, handwriting and stickers on the pages.
+- Seals (Dienstsiegel, Prägesiegel, embossed or round official seals) are type SEAL; certification notes (Beglaubigungsvermerk, 'Die Übereinstimmung ... wird beglaubigt', notarial or official certification with seal and signature) are type CERTIFICATION. Give the readable seal text (authority, place).
 - Treat each stamp as a structured form: printed labels (e.g. "Eingang", "Kostenstelle", "Sachlich richtig") and the values written next to them. Dates -> YYYY-MM-DD.
 - Verify the document type from visual clues (logos, titles); set `type_matches` false and `suggested_types` if the images contradict the target type.
 - The audit never contains financial data, banking information or party details.

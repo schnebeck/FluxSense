@@ -305,22 +305,28 @@ CERTIFICATE_TITLE_RE = re.compile(
     r"(wohnungsgeberbest[äa]tigung|wohnungsgeberbescheinigung|best[äa]tigung\s+des\s+wohnungsgebers|"
     r"\w*bescheinigung\b|arbeitgeberbest[äa]tigung|einzugsbest[äa]tigung|auszugsbest[äa]tigung|mietbest[äa]tigung|"
     r"certificate\s+of\s+\w+)", re.IGNORECASE)
-_NOT_CERTIFICATE_RE = re.compile(r"(antrag\s+auf|anmeldung\s+(?:bei|der|zur)|kündigung|rechnung|invoice)", re.IGNORECASE)
+# An Urkunde counts only as a short title line ('Geburtsurkunde', 'Urkunde über die Ernennung'), not in running text.
+URKUNDE_TITLE_RE = re.compile(r"^\W*(?:[A-ZÄÖÜ][\wäöüß-]*\s+){0,2}[\wäöüß-]*urkunde\b(?:\s+(?:über|zur|der|des)\b.{0,50})?\W*$",
+                              re.IGNORECASE)
+_NOT_CERTIFICATE_RE = re.compile(r"(antrag\s+auf|anmeldung\s+(?:bei|der|zur)|kündigung|rechnung|invoice|vollmacht|vertrag)",
+                                 re.IGNORECASE)
 
 
 def route_certificates(entities: List[Entity], layer: TextLayer) -> List[Entity]:
     """
     A confirmation of a fact about a person issued by a third party (landlord's
     Wohnungsgeberbestätigung, employer's Bescheinigung) that the classifier
-    called APPLICATION / OTHER / LETTER is re-typed CERTIFICATE when its title
-    (first lines of the first page) is a confirmation title and not an
-    application.
+    called APPLICATION / OTHER / LETTER / NOTE is re-typed CERTIFICATE when its
+    title (first lines of the first page) is a confirmation title or an
+    Urkunde title line, and not an application, a Vollmacht or a contract.
     """
     for ent in entities:
         if not ent.type_tags or not set(ent.type_tags) <= ROUTE_TO_CERTIFICATE or not layer.page(ent.pages[0]):
             continue
-        head = "\n".join([line for line in layer.page(ent.pages[0]).best_text().splitlines() if line.strip()][:8])
-        if CERTIFICATE_TITLE_RE.search(head) and not _NOT_CERTIFICATE_RE.search(head):
+        lines = [line for line in layer.page(ent.pages[0]).best_text().splitlines() if line.strip()][:8]
+        head = "\n".join(lines)
+        titled = CERTIFICATE_TITLE_RE.search(head) or any(URKUNDE_TITLE_RE.match(line) for line in lines)
+        if titled and not _NOT_CERTIFICATE_RE.search(head):
             logger.info(f"Stage 1: pages {ent.pages} re-typed {ent.type_tags} -> CERTIFICATE (confirmation title)")
             ent.type_tags = ["CERTIFICATE"]
     return entities

@@ -120,6 +120,9 @@ class PipelineSettings(BaseModel):
     carry_rows: int = Field(3, description="Rows of the previous chunk given as context")
     repair_text: str = Field("auto", description="auto (only after OCR) | always | never")
     visual_audit: bool = True
+    stamp_audit_all_types: bool = Field(True, description="Every type gets at least the stamp audit (stamps, seals, "
+                                                          "certification notes); statements and payslips keep the "
+                                                          "text-layer stamps only")
     zugferd_visual_audit: bool = False
     targeted_correction: bool = True
     max_text_chars: int = 40000

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0 - 2026-11-01
+
+- Field contract 1.11, §0.3: every document type gets at least the stamp
+  audit, so stamps and seals are found on letters, certificates and
+  enclosures too (`pipeline.stamp_audit_all_types`, default on).
+  Statements and payslips keep the text-layer stamps only (a folded audit
+  degraded their tables). New stamp types `SEAL` (Dienstsiegel,
+  Prägesiegel) and `CERTIFICATION` (Beglaubigungsvermerk); the output shape
+  of `visual_audit.layer_stamps[]` is unchanged.
+- Field contract 1.11, §11: an Urkunde (Geburts-, Heirats-, Sterbe-,
+  Ernennungs-, Verleihungs-, Meister-, Prüfungsurkunde) is CERTIFICATE; a
+  title line naming one re-types LETTER / OTHER / APPLICATION / NOTE
+  answers. New `certified_event` values BIRTH, MARRIAGE, DEATH,
+  APPOINTMENT, AWARD.
+
 ## 0.3.1 - 2026-10-31
 
 - Postcode and town in one field are separated after the extraction: a

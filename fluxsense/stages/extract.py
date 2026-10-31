@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
-from fluxsense.catalog.registry import AUDIT_FULL, AUDIT_NONE, Catalog, TableSpec, TypeSpec
+from fluxsense.catalog.registry import AUDIT_FULL, AUDIT_NONE, AUDIT_STAMP, Catalog, TableSpec, TypeSpec
 from fluxsense.config import Settings
 from fluxsense.extract.base import TextLayer
 from fluxsense.grounding.evidence import Obj, Rows, Scalar, Unwrapped, build_plan, unwrap, wire_schema
@@ -52,7 +52,7 @@ from fluxsense.tables.stitch import drop_artefact_rows, merge_chunks, render_mar
 
 logger = get_logger("stages.extract")
 
-STAMP_TYPES = ["RECEIVED", "PAID", "COMPANY", "INTERNAL_FORM", "HANDWRITTEN_NOTE"]
+STAMP_TYPES = ["RECEIVED", "PAID", "COMPANY", "INTERNAL_FORM", "HANDWRITTEN_NOTE", "SEAL", "CERTIFICATION"]
 LOCATIONS = ["TOP_RIGHT", "TOP_LEFT", "BOTTOM", "CENTER"]
 _AMOUNT_LINE_RE = re.compile(r"\d[\d.]*,\d{2}\b|\d[\d,]*\.\d{2}\b")
 TEXT_FIELDS_FOR_ARTEFACTS: Tuple[str, ...] = ("description", "counterparty")
@@ -382,7 +382,8 @@ class Extractor:
         Returns:
             The build.
         """
-        audit_mode = self.catalog.audit_mode([s.name for s in specs]) if audit else AUDIT_NONE
+        floor = AUDIT_STAMP if self.settings.pipeline.stamp_audit_all_types else AUDIT_NONE
+        audit_mode = self.catalog.audit_mode([s.name for s in specs], floor) if audit else AUDIT_NONE
         key = f"{'+'.join(s.name for s in specs)}|{with_tables}|{audit_mode}|{single_page}|{pointer}"
         if key in self._builds:
             return self._builds[key]

@@ -80,7 +80,7 @@ If extracting into "legal_body":
 - **contract_object:** the object of the contract (rented flat: street, house_number, zip_code, city, location_detail
   such as 'EG links'; vehicle or meter: identifier).
 - **Certificates / confirmations:** certified_persons (who the confirmation is about), certified_event (MOVE_IN,
-  MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), event_date / event_end_date, subject_address; the issuer is the
+  MOVE_OUT, EMPLOYMENT, MEMBERSHIP, COMPLETION, BIRTH, MARRIAGE, DEATH, APPOINTMENT, AWARD, OTHER), event_date / event_end_date, subject_address; the issuer is the
   party that confirms (sender). Handwritten entries on a printed form count.
 """
 

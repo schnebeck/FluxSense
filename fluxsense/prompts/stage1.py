@@ -124,6 +124,7 @@ The current scan mode is given with the document.
    - Letters from or to a court, lawyer, Schlichtungsstelle or ombudsman about proceedings/complaints are "LEGAL_CORRESPONDENCE", also when a bank writes to the ombudsman.
    - Enclosures without letterhead (screenshots, app logs, protocols, printed web pages) are "OTHER", even inside a case file.
    - Test/inspection reports (Prüfbericht, Testing report) are "CERTIFICATE".
+   - An Urkunde (Geburts-, Heirats-, Sterbe-, Ernennungs-, Verleihungs-, Meister-, Prüfungsurkunde) is "CERTIFICATE", never "OTHER"; a notarial deed is typed by its content (a sale is "CONTRACT", a Vollmacht "POWER_OF_ATTORNEY").
    - "LETTER" is only for private/personal letters and cards.
 
 8. **GROUNDEDNESS & UNCERTAINTY:**

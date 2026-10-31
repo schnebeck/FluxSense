@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.10 (2026-10-31). This contract defines what each core field of a
+Version 1.11 (2026-11-01). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -18,6 +18,11 @@ deliberate decision and bumps the version.
 3. **Stamps and handwriting are annotations.** Dates, numbers or names inside
    stamps (paid, received, `ÜBERWIESEN`, `Eingang`) or handwritten notes go
    to the visual audit, never into metadata fields. Exception: §2.4 forms.
+   Every type gets at least the stamp audit (stamps, seals, certification
+   notes; `visual_audit.layer_stamps[]` with type RECEIVED, PAID, COMPANY,
+   INTERNAL_FORM, HANDWRITTEN_NOTE, SEAL or CERTIFICATION); statements and
+   payslips keep the stamp lines of the text layer only
+   (`pipeline.stamp_audit_all_types`).
 4. **One label wins.** When the field has a label list below, a value next to
    a listed label beats any unlabelled value, and earlier labels in the list
    beat later ones.
@@ -234,12 +239,16 @@ insurance policies carry their payment terms in `legal_body`:
 
 - A form confirming a fact about a person and issued by a third party
   (landlord's `Wohnungsgeberbestätigung`, employer's `Bescheinigung`) is a
-  CERTIFICATE, also when it is filled in by hand on a printed form; a
-  LETTER / OTHER / APPLICATION answer with such a title is re-typed.
+  CERTIFICATE, also when it is filled in by hand on a printed form; so is an
+  `Urkunde` (Geburts-, Heirats-, Sterbe-, Ernennungs-, Verleihungs-,
+  Meister-, Prüfungsurkunde). A LETTER / OTHER / APPLICATION / NOTE answer
+  with such a title is re-typed (not when the head names a Vollmacht or a
+  Vertrag: a notarial deed is typed by its content).
 - Sender = the issuer (landlord, employer, school, authority); the
   issuer's name in a form field counts as printed.
 - `legal_body`: `certified_persons`, `certified_event` (MOVE_IN, MOVE_OUT,
-  EMPLOYMENT, MEMBERSHIP, COMPLETION, OTHER), `event_date` /
+  EMPLOYMENT, MEMBERSHIP, COMPLETION, BIRTH, MARRIAGE, DEATH, APPOINTMENT,
+  AWARD, OTHER), `event_date` /
   `event_end_date`, `subject_address` (with `location_detail`), as printed or
   written.
 

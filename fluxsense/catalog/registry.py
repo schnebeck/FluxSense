@@ -88,6 +88,8 @@ class TypeSpec:
         doc_number_labels: Regexes; a doc_number must be printed next to one of them (else removed).
         doc_date_labels: Regexes; for enclosures without letterhead a doc_date must be labelled (else removed).
         due_date_labels: Regexes; a due/payment date must be printed next to one of them (else removed).
+        fold_audit: False for types whose extraction degrades when the visual audit is folded into it (statements,
+            payslips): they get no stamp-audit floor and keep the text-layer stamps only.
     """
 
     name: str
@@ -107,6 +109,7 @@ class TypeSpec:
     doc_number_labels: Tuple[str, ...] = ()
     doc_date_labels: Tuple[str, ...] = ()
     due_date_labels: Tuple[str, ...] = ()
+    fold_audit: bool = True
 
     @property
     def output_type(self) -> str:
@@ -155,12 +158,24 @@ class Catalog:
         mapped = [self.get(t).output_type if self.has(t) else t for t in type_tags]
         return list(dict.fromkeys(mapped))
 
-    def audit_mode(self, type_tags: List[str]) -> str:
-        """Highest audit mode over all tags."""
+    def audit_mode(self, type_tags: List[str], floor: str = AUDIT_NONE) -> str:
+        """
+        Highest audit mode over all tags.
+
+        Args:
+            type_tags: Document types.
+            floor: Minimum mode for types that allow a folded audit (e.g. STAMP_ONLY: stamps and seals on every type).
+
+        Returns:
+            The audit mode.
+        """
         best = AUDIT_NONE
         for spec in self.specs_for(type_tags):
-            if AUDIT_LEVEL[spec.audit_mode] > AUDIT_LEVEL[best]:
-                best = spec.audit_mode
+            mode = spec.audit_mode
+            if spec.fold_audit and AUDIT_LEVEL[floor] > AUDIT_LEVEL[mode]:
+                mode = floor
+            if AUDIT_LEVEL[mode] > AUDIT_LEVEL[best]:
+                best = mode
         return best
 
 
