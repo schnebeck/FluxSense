@@ -38,6 +38,10 @@ def _names(result: Any) -> List[str]:
                 names += [str(party.get(k)) for k in ("name", "company", "street", "city", "contact") if party.get(k)]
         legal = ((doc.fields or {}).get("bodies") or {}).get("legal_body") or {}
         names += [str(n) for n in (legal.get("parties") or []) + (legal.get("certified_persons") or [])]
+        poa = ((doc.fields or {}).get("bodies") or {}).get("power_of_attorney_body") or {}
+        persons = [poa.get("principal")] + list(poa.get("agents") or [])
+        names += [str(p.get(k)) for p in persons if isinstance(p, dict) for k in ("name", "street", "city") if p.get(k)]
+        names += [str(n) for n in poa.get("addressees") or []]
         names += [s.signer_name for s in doc.signatures if s.signer_name]
         names += [f.entry for f in doc.form_fields if f.kind in ("name", "persons", "address") and f.entry]
     return names

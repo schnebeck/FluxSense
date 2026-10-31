@@ -2,6 +2,18 @@
 
 ## 0.2.0 - 2026-10-31
 
+- Field contract 1.10, §14: new type `POWER_OF_ATTORNEY` (Vollmacht,
+  Vorsorge-, General-, Bank-, Unter-, Prozessvollmacht) with
+  `power_of_attorney_body`: principal, agents (relation, role), sole / joint
+  representation, addressees, scope areas and summary, limitations,
+  confidentiality release, sub-powers, § 181 BGB, validity (from / until,
+  beyond death, revocable), place of issue, certification and combined
+  care / patient directives. Parties follow §2.4 (principal = sender; the
+  agent is never the recipient). A Vollmacht is no longer APPLICATION; a
+  title line naming a power of attorney re-types APPLICATION, letter and
+  OTHER answers. Signature labels `Vollmachtgeber` / `Bevollmächtigte/r`
+  give the roles `principal` / `agent`; principal, agent and addressee
+  names are never spell-corrected.
 - Field contract 1.9, §13.1: page texts hold no control characters. Line
   and page breaks (CR / CRLF, form feed, vertical tab, Unicode line
   separators) become `\n`, tabs a space, all other control characters plus

@@ -58,7 +58,7 @@ _HANDWRITTEN_DATE_RE = re.compile(r"\d{1,2}\s*[./|]\s*\d{1,2}\s*[./|]\s*\d{2,4}"
 _PLACE_DEN_RE = re.compile(r"^\s*([A-ZÄÖÜ][\wäöüß .-]{1,30}?)\s*,\s*(?:den\s+|am\s+)?(.*)$")
 _PLACE_PREFIX_RE = re.compile(r"^\s*(?:[A-ZÄÖÜ][\wäöüß .-]{1,30}?\s*,\s*(?:den|am)?\s*)?$")
 # Role words of signature line labels: (pattern, role, issuing side of the document).
-ROLE_RULES: Tuple[Tuple["re.Pattern[str]", str, bool], ...] = tuple(
+ROLE_RULES: Tuple[Tuple["re.Pattern[str]", str, Optional[bool]], ...] = tuple(
     (re.compile(pattern, re.IGNORECASE), role, issuing) for pattern, role, issuing in (
         (r"wohnungsgeber", "landlord", True), (r"vermieter", "landlord", True), (r"(?<!ver)mieter", "tenant", False),
         (r"arbeitgeber|employer", "employer", True), (r"arbeitnehmer|beschäftigte|employee", "employee", False),
@@ -67,7 +67,10 @@ ROLE_RULES: Tuple[Tuple["re.Pattern[str]", str, bool], ...] = tuple(
         (r"aussteller|issuer", "issuer", True), (r"antragsteller|applicant", "applicant", False),
         (r"versicherungsnehmer|policyholder", "policyholder", False), (r"kontoinhaber|account holder", "account_holder", False),
         (r"erziehungsberechtigt|guardian", "guardian", False), (r"patient", "patient", False),
-        (r"\bkunde|customer", "customer", False), (r"zahlungspflichtig|payer", "payer", False)))
+        (r"\bkunde|customer", "customer", False), (r"zahlungspflichtig|payer", "payer", False),
+        (r"vollmachtgeber|principal", "principal", False), (r"bevollmächtigt|bevollmaechtigt|\bagent\b", "agent", None)))
+# Agents of a power of attorney (§14): neither sender nor recipient - named by the body's agent list.
+POA_AGENTS_PATH: Tuple[str, ...] = ("bodies", "power_of_attorney_body", "agents")
 _LEADING_SIGNATURE_RE = re.compile(r"^\W*(?:ort\s*,?\s*/?\s*)?(?:datum\s*[,/]?\s*)?(?:unterschrift|signature)\b", re.IGNORECASE)
 _FILLER_WORDS = re.compile(r"\b(?:der|die|des|unterschrift|datum|ort|und|/|,|\(|\))\b", re.IGNORECASE)
 
@@ -432,6 +435,15 @@ def _party_name(party: Any) -> Optional[str]:
     return str(value) if value else None
 
 
+def _single_agent(fields: Dict[str, Any]) -> Optional[str]:
+    """The name of the only agent of a power of attorney (None for none or several)."""
+    node: Any = fields
+    for key in POA_AGENTS_PATH:
+        node = node.get(key) if isinstance(node, dict) else None
+    names = [a.get("name") for a in node if isinstance(a, dict) and a.get("name")] if isinstance(node, list) else []
+    return str(names[0]) if len(names) == 1 else None
+
+
 def attribute(blocks: Sequence[SignatureBlock], fields: Dict[str, Any], party_case: Optional[str],
               width: float = 595.0, height: float = 842.0, sizes: Optional[Dict[int, Tuple[float, float]]] = None) -> List[SignatureOut]:
     """
@@ -468,12 +480,16 @@ def attribute(blocks: Sequence[SignatureBlock], fields: Dict[str, Any], party_ca
             name, source = block.printed_name, SOURCE_PRINTED
             evidence = (f"typed signature '{block.label}'" if block.kind == TYPED_SIGNATURE else
                         f"printed name '{block.printed_name}' under the signature" + (f" of '{block.label}'" if block.label else ""))
+        elif block.role == "agent":
+            name = _single_agent(fields)
+            if name:
+                source, evidence = SOURCE_LABEL, f"line label '{block.label}' names the agent (the only one in the power of attorney)"
         elif block.role is not None:
             side = "recipient" if (block.issuing is True) == form else "sender"
             name = _party_name(meta.get(side))
             if name:
                 source, evidence = SOURCE_LABEL, f"line label '{block.label}' names the {block.role} ({side})"
-        if name is None and form and block.kind != CLOSING:
+        if name is None and form and block.kind != CLOSING and role != "agent":
             name = _party_name(meta.get("sender"))
             if name:
                 source, evidence = SOURCE_FILLER, f"the filler of the form (§2.4) signs '{block.label}'"

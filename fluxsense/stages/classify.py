@@ -326,6 +326,34 @@ def route_certificates(entities: List[Entity], layer: TextLayer) -> List[Entity]
     return entities
 
 
+ROUTE_TO_POWER_OF_ATTORNEY: frozenset = frozenset({"APPLICATION", "LEGAL_CORRESPONDENCE", "OFFICIAL_LETTER", "LETTER",
+                                                    "OTHER", "NOTE"})
+# A title line that names a power of attorney ('Vollmacht', 'Vorsorgevollmacht', 'Vollmacht und Schweigepflichtentbindung').
+POA_TITLE_RE = re.compile(r"^\W*(?:[A-ZÄÖÜ][\wäöüß-]*\s+){0,2}[\wäöüß-]*vollmacht\b(?:\s+(?:und|mit|zur|zugleich|sowie|für|"
+                          r"gemäß|nach)\b.{0,60})?\W*$", re.IGNORECASE)
+_NOT_POA_RE = re.compile(r"(antrag\s+auf|antragsformular|kündigung|widerruf\s+der|rechnung|invoice)", re.IGNORECASE)
+
+
+def route_powers_of_attorney(entities: List[Entity], layer: TextLayer) -> List[Entity]:
+    """
+    Field contract §14: a document titled as a power of attorney (a short
+    title line 'Vollmacht', 'Vorsorgevollmacht', 'Vollmacht und
+    Schweigepflichtentbindung' among the first lines of its first page) that
+    the classifier called APPLICATION / LEGAL_CORRESPONDENCE / OFFICIAL_LETTER /
+    LETTER / OTHER / NOTE is re-typed POWER_OF_ATTORNEY - unless the head
+    names an application ('Antrag auf'), a cancellation or an invoice: a form
+    with an authorisation box stays what it is.
+    """
+    for ent in entities:
+        if not ent.type_tags or not set(ent.type_tags) <= ROUTE_TO_POWER_OF_ATTORNEY or not layer.page(ent.pages[0]):
+            continue
+        head = [line for line in layer.page(ent.pages[0]).best_text().splitlines() if line.strip()][:8]
+        if any(POA_TITLE_RE.match(line) for line in head) and not _NOT_POA_RE.search("\n".join(head)):
+            logger.info(f"Stage 1: pages {ent.pages} re-typed {ent.type_tags} -> POWER_OF_ATTORNEY (title)")
+            ent.type_tags = ["POWER_OF_ATTORNEY"]
+    return entities
+
+
 def attach_boilerplate(entities: List[Entity], signatures: List[PageSignature]) -> List[Entity]:
     """
     Merges an entity into the preceding one when its first page is blank or
@@ -470,6 +498,7 @@ class Classifier:
                 first = by_page.get(ent.pages[0])
                 ent.letterhead = bool(first and (first.letterhead or first.addressee or first.salutation))
         entities = route_certificates(route_private_notes(route_transfer_confirmations(entities, layer), layer), layer)
+        entities = route_powers_of_attorney(entities, layer)
         language = (raw.get("source_file_summary") or {}).get("primary_language")
         result = ClassificationResult(entities=entities, strategy=strategy, preflight=pre, raw=raw, errors=errors,
                                       language=language)

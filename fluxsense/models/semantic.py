@@ -345,6 +345,61 @@ class CorrespondenceBody(BaseModel):
     reference_numbers: List[str] = Field(default_factory=list)
 
 
+class PoaPerson(BaseModel):
+    """A person named in a power of attorney: the principal or an agent."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    name: Optional[str] = Field(None, description="First and last name as printed, without salutation or title")
+    birth_date: Optional[str] = Field(None, description="Date of birth (YYYY-MM-DD), if printed or written")
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+    zip_code: Optional[str] = None
+    city: Optional[str] = None
+    relation: Optional[str] = Field(None, description="Agent only: relation to the principal as printed ('Tochter', 'Ehemann')")
+    role: Optional[str] = Field(None, description="Agent only, MUST be: AGENT, SUBSTITUTE (Ersatzbevollmächtigte/r, acts only "
+                                                  "if the first agent cannot), SUB_AGENT (Unterbevollmächtigte/r)")
+
+
+class PowerOfAttorneyBody(BaseModel):
+    """Power of attorney (Vollmacht): who authorises whom, towards whom, for what and how long (field contract §14)."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+    document_title: Optional[str] = Field(None, description="Title as printed ('Vollmacht', 'Vorsorgevollmacht')")
+    poa_type: Optional[str] = Field(None, description="MUST be: GENERAL (Generalvollmacht, all matters), LASTING "
+                                                      "(Vorsorgevollmacht), BANKING (Bank-, Konto-, Depotvollmacht), SPECIFIC "
+                                                      "(Einzel-/Spezialvollmacht for named matters, also Prozess-/Anwaltsvollmacht), "
+                                                      "SUB_POWER (Untervollmacht), OTHER")
+    principal: Optional[PoaPerson] = Field(None, description="Vollmachtgeber/in: the person who grants the authority")
+    agents: List[PoaPerson] = Field(default_factory=list, description="Bevollmächtigte/r: every authorised person in printed order")
+    representation: Optional[str] = Field(None, description="Several agents, MUST be: SOLE (each alone, Einzelvertretung), "
+                                                            "JOINT (only together, Gesamtvertretung); empty if not printed")
+    addressees: List[str] = Field(default_factory=list, description="Institutions or persons the authority is directed to, as "
+                                                                    "printed (insurer, bank, authority, named service provider)")
+    scope_areas: List[str] = Field(default_factory=list, description="Areas covered, each MUST be: HEALTH, CARE, RESIDENCE, "
+                                                                     "FINANCE, BANKING, PROPERTY, AUTHORITIES, SOCIAL_BENEFITS, "
+                                                                     "INSURANCE, POST, TELECOM, LEGAL_PROCEEDINGS, CONTRACTS, OTHER")
+    general_power: Optional[bool] = Field(None, description="True: all matters ('in allen Angelegenheiten'); False: only named matters")
+    scope_summary: Optional[str] = Field(None, description="One or two sentences in the document language: what the agents may do")
+    limitations: List[str] = Field(default_factory=list, description="Printed restrictions or exclusions, short, as printed")
+    confidentiality_release: Optional[bool] = Field(None, description="True if it releases from confidentiality "
+                                                                      "(Schweigepflichtentbindung, medical or other)")
+    substitution_allowed: Optional[bool] = Field(None, description="True if the agents may grant sub-powers (Untervollmacht)")
+    self_dealing_allowed: Optional[bool] = Field(None, description="True if released from § 181 BGB (Insichgeschäfte)")
+    valid_from: Optional[str] = Field(None, description="Start of validity if printed (YYYY-MM-DD); not the issue date")
+    valid_until: Optional[str] = Field(None, description="End of validity if printed (YYYY-MM-DD)")
+    valid_beyond_death: Optional[bool] = Field(None, description="True if it stays valid after the principal's death "
+                                                                 "('über den Tod hinaus')")
+    revocable: Optional[bool] = Field(None, description="True for 'bis auf (schriftlichen) Widerruf', False for 'unwiderruflich'; "
+                                                        "empty if not printed")
+    place_of_issue: Optional[str] = Field(None, description="Place next to the date of issue ('<Ort>, den <Datum>')")
+    certification: Optional[str] = Field(None, description="MUST be: NONE, SIGNATURE_CERTIFIED (Unterschrift öffentlich "
+                                                            "beglaubigt, also by the Betreuungsbehörde), NOTARIZED "
+                                                            "(notariell beurkundet)")
+    also_contains: List[str] = Field(default_factory=list, description="Further declarations in the same document, each MUST "
+                                                                       "be: CARE_DIRECTIVE (Betreuungsverfügung), "
+                                                                       "PATIENT_DIRECTIVE (Patientenverfügung)")
+
+
 # Body key -> model. The catalog registers additional (custom) bodies here.
 BODY_MODELS: Dict[str, Type[BaseModel]] = {
     "finance_body": FinanceBody,
@@ -353,6 +408,7 @@ BODY_MODELS: Dict[str, Type[BaseModel]] = {
     "statement_body": StatementBody,
     "payslip_body": PayslipBody,
     "correspondence_body": CorrespondenceBody,
+    "power_of_attorney_body": PowerOfAttorneyBody,
 }
 
 

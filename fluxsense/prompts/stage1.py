@@ -118,7 +118,8 @@ The current scan mode is given with the document.
 
 7. **Type cues (German documents):**
    - Telecom, internet, mobile, electricity, gas and water bills carry BOTH "INVOICE" and "UTILITY_BILL".
-   - A form, Antrag, Fragebogen, Kündigung, Widerruf or Vollmacht filled in or signed by the user is "APPLICATION", even if the form was printed by a company.
+   - A form, Antrag, Fragebogen, Kündigung or Widerruf filled in or signed by the user is "APPLICATION", even if the form was printed by a company.
+   - A document whose main content grants another person authority to act (Vollmacht, Vorsorgevollmacht, Generalvollmacht, Bank-/Kontovollmacht, Untervollmacht, also with Schweigepflichtentbindung) is "POWER_OF_ATTORNEY", never "APPLICATION" or "LEGAL_CORRESPONDENCE"; a form that only contains an authorisation box or section stays "APPLICATION".
    - Behördenschreiben and formal letters about a case are "OFFICIAL_LETTER"; Anwalt/Gericht/Schlichtung/Ombudsmann letters are "LEGAL_CORRESPONDENCE"; Steuerbescheid is "TAX_ASSESSMENT".
    - Letters from or to a court, lawyer, Schlichtungsstelle or ombudsman about proceedings/complaints are "LEGAL_CORRESPONDENCE", also when a bank writes to the ombudsman.
    - Enclosures without letterhead (screenshots, app logs, protocols, printed web pages) are "OTHER", even inside a case file.

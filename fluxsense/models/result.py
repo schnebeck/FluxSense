@@ -209,7 +209,8 @@ class SignatureOut(BaseModel):
 
     signer_name: Optional[str] = Field(None, description="Signer derived from printed content (None: no evidence)")
     role: Optional[str] = Field(None, description="Role of the signer: the role named by the line label (landlord, tenant, "
-                                                  "employer, applicant, ...), sender (letter closing) or form_filler")
+                                                  "employer, applicant, principal, agent, ...), sender (letter closing) or "
+                                                  "form_filler")
     place: Optional[str] = Field(None, description="Place written / printed next to the signature")
     date: Optional[str] = Field(None, description="Date next to the signature (ISO)")
     page: int

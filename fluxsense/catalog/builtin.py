@@ -153,6 +153,22 @@ def _correspondence(name: str, description: str, audit: str = AUDIT_NONE, kpf_ty
     )
 
 
+POA = "bodies.power_of_attorney_body"
+POA_QUESTIONS: Tuple[str, ...] = (
+    "Who grants the authority (Vollmachtgeber/in: name, date of birth, address)? This person is meta_header.sender.",
+    "Who is authorised (every Bevollmächtigte/r and Ersatzbevollmächtigte/r: name, relation to the principal, date of "
+    "birth, address)? Agents are never meta_header.recipient.",
+    "Towards whom is the authority directed (insurer, bank, authority, named service providers)? The organisation that "
+    "receives the document is meta_header.recipient; a general power without addressee has none.",
+    "For which matters (general or named areas), with which limitations, and may each agent act alone or only jointly?",
+    "Does it release from confidentiality (Schweigepflichtentbindung), allow sub-powers (Untervollmacht) or release from "
+    "§ 181 BGB?",
+    "From when and until when is it valid, is it valid beyond death ('über den Tod hinaus') and is it revocable "
+    "('bis auf Widerruf')?",
+    "Place and date of issue, and is the signature certified (öffentlich beglaubigt) or notarised (notariell beurkundet)?",
+)
+
+
 def build_catalog() -> Catalog:
     """
     Creates the catalog with all built-in types.
@@ -233,6 +249,16 @@ def build_catalog() -> Catalog:
     cat.register(_legal("OFFICIAL_LETTER", "Behördenschreiben, Bescheid (not Steuerbescheid), formal letter of a bank, insurer or company to the customer "
                         "about a case (not addressed to a court/ombudsman)",
                         extra=("correspondence_body",)))
+    cat.register(TypeSpec(
+        name="POWER_OF_ATTORNEY", body_key="power_of_attorney_body",
+        description="Vollmacht: a document whose main content grants another person authority to act for the issuer "
+                    "(Vollmacht, Vorsorgevollmacht, Generalvollmacht, Bank-/Kontovollmacht, Untervollmacht, Prozessvollmacht, "
+                    "also with Schweigepflichtentbindung); a form that only contains an authorisation box stays APPLICATION",
+        questions=POA_QUESTIONS, rules=("dates", "completeness", "identity"),
+        critical_fields=(f"{POA}.principal.name", f"{POA}.agents.*.name", f"{POA}.valid_from", f"{POA}.valid_until",
+                         "meta_header.doc_date"),
+        required_fields=(f"{POA}.principal.name",),
+        audit_mode=AUDIT_FULL))
     cat.register(_correspondence("LETTER", "Private or personal letter with an addressee, family/friends correspondence (greeting cards and notices are NOTE)",
                                  kpf_type="OTHER"))
     kpf = {"SICK_NOTE": "MEDICAL_DOCUMENT", "TECHNICAL_DOC": "OTHER"}
@@ -240,7 +266,7 @@ def build_catalog() -> Catalog:
                               ("MEDICAL_DOCUMENT", "Arztbrief, Befund, Rezept, Heil- und Kostenplan", AUDIT_NONE),
                               ("VEHICLE_REGISTRATION", "Zulassungsbescheinigung Teil I/II, Fahrzeugschein, Fahrzeugbrief", AUDIT_NONE),
                               ("TECHNICAL_DOC", "Bedienungsanleitung, Datenblatt, technical description (test reports are CERTIFICATE)", AUDIT_NONE),
-                              ("APPLICATION", "Antrag, Formular, Fragebogen, Kündigung, Widerruf, Vollmacht, Erklärung filled in / signed by the user (also a company form the user filled in and sends back)", AUDIT_FULL),
+                              ("APPLICATION", "Antrag, Formular, Fragebogen, Kündigung, Widerruf, Erklärung filled in / signed by the user (also a company form the user filled in and sends back; a Vollmacht is POWER_OF_ATTORNEY)", AUDIT_FULL),
                               ("NOTE", "Notiz, Aktenvermerk, Memo, handschriftliche Notiz, Traueranzeige, Glückwunsch-/Grußkarte, Einladungskarte (private notices and cards: no parties)", AUDIT_NONE),
                               ("OTHER", "Enclosures without letterhead (screenshots, app logs, protocols, printed web pages, transaction "
                                "lists, photos), advertising, leaflets, anything else", AUDIT_NONE)):

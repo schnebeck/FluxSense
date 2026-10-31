@@ -25,7 +25,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from fluxsense.grounding.normalize import compact, parse_date
 
-CONTRACT_VERSION: str = "1.9"
+CONTRACT_VERSION: str = "1.10"
 
 
 @dataclass(frozen=True)
@@ -216,6 +216,7 @@ TYPE_CONTRACT: Dict[str, TypeContract] = {
     "BANK_STATEMENT": TypeContract("statement", "statement", "2.3"),
     "CREDIT_CARD_STATEMENT": TypeContract("statement", "statement", "2.3"),
     "APPLICATION": TypeContract("form", "form", "2.4"),
+    "POWER_OF_ATTORNEY": TypeContract("form", "form", "2.4"),
     "CONTRACT": TypeContract("contract", "contract", "2.1"),
     "INSURANCE_POLICY": TypeContract("contract", "contract", "2.1"),
     "CERTIFICATE": TypeContract("contract", "certificate", "2.1"),

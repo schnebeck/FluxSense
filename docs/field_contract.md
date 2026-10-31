@@ -1,6 +1,6 @@
 # FluxSense Field Contract
 
-Version 1.9 (2026-10-31). This contract defines what each core field of a
+Version 1.10 (2026-10-31). This contract defines what each core field of a
 logical document means. The engine (prompts, catalog, post-checks) and
 any evaluation of its results follow it. Changing a rule here is a
 deliberate decision and bumps the version.
@@ -378,8 +378,10 @@ page, bbox, status, evidence, signer_source, label, removed_ocr}`.
   named by the line label (`line_label`: issuing roles - landlord,
   employer, seller, contractor, issuer - are the sender, the counterpart
   roles - tenant, employee, buyer, client, applicant, policyholder, ... -
-  the recipient; on a §2.4 form the other way round), the filler of a §2.4
-  form (`form_filler`). Without evidence, and for an `empty` place,
+  the recipient; on a §2.4 form the other way round; `Vollmachtgeber` is the
+  principal = the sender, `Bevollmächtigte/r` the agent = the only agent of
+  the power of attorney, §14), the filler of a §2.4 form (`form_filler`,
+  never for an agent's line). Without evidence, and for an `empty` place,
   `signer_name` is null - this is no error.
 - Place and date come from the date-only field reading next to the
   signature (`Ort, Datum`, `<Ort>, den`), else from a printed `<Ort>, den
@@ -494,3 +496,44 @@ image positions; a hyphenated pair keeps its visible split, the hyphen
 becomes U+00AD and one `/ActualText` span carries the joined word;
 handwritten form entries stand at their entry regions; nothing is placed
 inside signature regions.
+
+## 14. Powers of attorney
+
+- Type `POWER_OF_ATTORNEY`: a document whose main content grants another
+  person authority to act for the issuer - `Vollmacht`,
+  `Vorsorgevollmacht`, `Generalvollmacht`, Bank- / Konto- /
+  Depotvollmacht, `Untervollmacht`, Prozess- / Anwaltsvollmacht, also
+  combined with a `Schweigepflichtentbindung`, a `Betreuungsverfügung` or a
+  `Patientenverfügung`. A form that only contains an authorisation box or
+  section stays `APPLICATION`. An APPLICATION / LEGAL_CORRESPONDENCE /
+  OFFICIAL_LETTER / LETTER / OTHER / NOTE answer is re-typed when a short
+  title line among the first lines of the first page names a power of
+  attorney (`Vollmacht`, `Vorsorgevollmacht`, `Vollmacht und
+  Schweigepflichtentbindung`) and the head names no application (`Antrag
+  auf`), cancellation or invoice.
+- Parties follow §2.4: sender = the principal (`Vollmachtgeber`), recipient
+  = the organisation the document is directed to and that receives it
+  (insurer, bank, authority); a general power without such an addressee has
+  no recipient. The agent is never the recipient. doc_date = the date of
+  issue next to the signature (§3 form row); doc_number follows the §4 form
+  row.
+- `power_of_attorney_body`: `document_title`; `poa_type` (GENERAL, LASTING,
+  BANKING, SPECIFIC, SUB_POWER, OTHER); `principal` and `agents[]` as
+  `{name, birth_date, street, house_number, zip_code, city, relation,
+  role}` (`relation` as printed, e.g. `Tochter`; agent `role` AGENT,
+  SUBSTITUTE, SUB_AGENT); `representation` (SOLE, JOINT; empty if not
+  printed); `addressees[]` as printed; `scope_areas[]` (HEALTH, CARE,
+  RESIDENCE, FINANCE, BANKING, PROPERTY, AUTHORITIES, SOCIAL_BENEFITS,
+  INSURANCE, POST, TELECOM, LEGAL_PROCEEDINGS, CONTRACTS, OTHER);
+  `general_power`; `scope_summary` (one or two sentences written by the
+  model, not grounded); `limitations[]` as printed;
+  `confidentiality_release`, `substitution_allowed`,
+  `self_dealing_allowed` (§ 181 BGB); `valid_from` / `valid_until` (not the
+  issue date); `valid_beyond_death`; `revocable` (`bis auf Widerruf` =
+  true, `unwiderruflich` = false, else empty); `place_of_issue`;
+  `certification` (NONE, SIGNATURE_CERTIFIED, NOTARIZED); `also_contains[]`
+  (CARE_DIRECTIVE, PATIENT_DIRECTIVE). Names, dates and places are printed
+  or written values and grounded like any other; an empty field is no
+  error.
+- Who signed is not part of the body: the signature places of §12.3 carry
+  it (`principal`, `agent` roles).
